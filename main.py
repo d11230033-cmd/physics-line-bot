@@ -128,7 +128,8 @@ system_prompt_text = """
 ## Step 4: Summarize & Extend
 - After the student finds the correct answer, praise them.
 - Then, provide a summary of THEIR solution process in a clean note format.
-"""
+""" 
+# --- ★★★ 這就是我上次忘記的、該死的「關閉符號」！ ★★★
 
 # === Gemini AI 專家設定 ===
 genai.configure(api_key=GOOGLE_API_KEY)
@@ -181,4 +182,71 @@ def handle_gemini_response(chat, response):
             # --- 最終的兼容性修正 (不再依賴 Part) ---
             final_response = chat.send_message(
                 Tool.from_dict(
-                    {'function_response
+                    {'function_response': {'name': tool_name, 'response': {'result': tool_result}}}
+                )
+            )
+            return final_response.text
+        else:
+            return response.text
+    except (ValueError, IndexError, AttributeError) as e:
+        print(f"AI 回應格式非預期或無 Function Call，直接使用 .text: {e}")
+        return response.text
+
+# --- 文字處理專家 (由「對話宗師」負責) ---
+@handler.add(MessageEvent, message=TextMessageContent)
+def handle_text_message(event):
+    user_id = event.source.user_id
+    user_text = event.message.text
+
+    if user_id not in conversation_history:
+        with ApiClient(configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            line_bot_api.reply_message_with_http_info(
+                ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text="請先上傳題目照片，我們才能開始一個新的解題任務喔！")])
+            )
+        return
+
+    chat = conversation_history[user_id]
+    response = chat.send_message(user_text)
+    ai_response_text = handle_gemini_response(chat, response)
+    
+    with ApiClient(configuration) as api_client:
+        line_bot_api = MessagingApi(api_client)
+        line_bot_api.reply_message_with_http_info(
+            ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=ai_response_text)])
+        )
+
+# --- 圖片處理專家 (由「視覺專家」開啟，再交棒給「對話宗師」) ---
+@handler.add(MessageEvent, message=ImageMessageContent)
+def handle_image_message(event):
+    user_id = event.source.user_id
+    
+    with ApiClient(configuration) as api_client:
+        line_bot_blob_api = MessagingApiBlob(api_client)
+        message_content = line_bot_blob_api.get_message_content(message_id=event.message.id)
+        image_bytes = io.BytesIO(message_content)
+
+    img = Image.open(image_bytes)
+    
+    prompt_with_image = [system_prompt_text, "請根據你看到的圖片，嚴格執行你的 Step 1 (確認式互動)。", img]
+    vision_response = vision_model.generate_content(prompt_with_image)
+    
+    chat = text_model.start_chat(history=[
+        {'role': 'user', 'parts': [system_prompt_text, "這是我上傳的題目圖片，請開始互動。"]},
+        {'role': 'model', 'parts': [vision_response.text]}
+    ])
+    
+    conversation_history[user_id] = chat
+    print(f"為使用者 {user_id} 建立了包含圖片辨識結果的全新對話。")
+
+    with ApiClient(configuration) as api_client:
+        line_bot_api = MessagingApi(api_client)
+        line_bot_api.reply_message_with_http_info(
+            ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=vision_response.text)])
+        )
+
+# --- ★★★ 最終的神殿部署版啟動方式 ★★★ ---
+if __name__ == "__main__":
+    # 從環境變數讀取 Render.com 指定的 PORT，如果找不到，才使用 5001 (用於本地測試)
+    port = int(os.environ.get('PORT', 5001))
+    app.run(host='0.0.0.0', port=port)
