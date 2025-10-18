@@ -22,10 +22,10 @@ app = Flask(__name__)
 
 # --- ★★★ 最終的神殿部署版鑰匙 ★★★ ---
 # 我們將從「秘密保險箱」(環境變數) 中讀取鑰匙
-channel_access_token = os.getenv('9om1XM8qk1KzNtgSD5niIR5qV0a7oJfOXnvr65hzUYUN4R7RQhQsbHBoNSKTyPSSK86RWmy241hpHnJNlGAdFHKwddmKsiiLvY8/vWrjh/f7HmRirlajOkGKkNxjRG8oYY/KTEC5DjouLZpmo/XHnQdB04t89/1O/w1cDnyilFU=', None)
-channel_secret = os.getenv('a0c2fd186dc502c50091599ae2b89dc5', None)
-GOOGLE_API_KEY = os.getenv('AIzaSyCb6ugnXxrTUxtDYpIrHJxJ-B_l7_XC3L0', None)
-SERPAPI_API_KEY = os.getenv('d5af256868da2edcb2e498c0a66f07f40c39325b2c091d03bc2e99233002733d', None)
+channel_access_token = os.getenv('LINE_CHANNEL_ACCESS_TOKEN', None)
+channel_secret = os.getenv('LINE_CHANNEL_SECRET', None)
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY', None)
+SERPAPI_API_KEY = os.getenv('SERPAPI_API_KEY', None)
 
 # 檢查鑰匙是否都已成功讀取
 if not all([channel_access_token, channel_secret, GOOGLE_API_KEY, SERPAPI_API_KEY]):
@@ -164,7 +164,7 @@ def handle_gemini_response(chat, response):
             tool_name = function_call.name
             tool_args = {key: value for key, value in function_call.args.items()}
             
-            print(f"AI DDE 想要使用工具: {tool_name}, 參數: {tool_args}") # 修正: 移除非預期字元 'DDE'
+            print(f"AI 想要使用工具: {tool_name}, 參數: {tool_args}") # 修正: 移除非預期字元 'DDE'
 
             tool_result = "" # 修正: 確保 tool_result 總是被定義
             if tool_name == "calculator":
@@ -181,71 +181,4 @@ def handle_gemini_response(chat, response):
             # --- 最終的兼容性修正 (不再依賴 Part) ---
             final_response = chat.send_message(
                 Tool.from_dict(
-                    {'function_response': {'name': tool_name, 'response': {'result': tool_result}}}
-                )
-            )
-            return final_response.text
-        else:
-            return response.text
-    except (ValueError, IndexError, AttributeError) as e:
-        print(f"AI 回應格式非預期或無 Function Call，直接使用 .text: {e}")
-        return response.text
-
-# --- 文字處理專家 (由「對話宗師」負責) ---
-@handler.add(MessageEvent, message=TextMessageContent)
-def handle_text_message(event):
-    user_id = event.source.user_id
-    user_text = event.message.text
-
-    if user_id not in conversation_history:
-        with ApiClient(configuration) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            line_bot_api.reply_message_with_http_info(
-                ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text="請先上傳題目照片，我們才能開始一個新的解題任務喔！")])
-            )
-        return
-
-    chat = conversation_history[user_id]
-    response = chat.send_message(user_text)
-    ai_response_text = handle_gemini_response(chat, response)
-    
-    with ApiClient(configuration) as api_client:
-        line_bot_api = MessagingApi(api_client)
-        line_bot_api.reply_message_with_http_info(
-            ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=ai_response_text)])
-        )
-
-# --- 圖片處理專家 (由「視覺專家」開啟，再交棒給「對話宗師」) ---
-@handler.add(MessageEvent, message=ImageMessageContent)
-def handle_image_message(event):
-    user_id = event.source.user_id
-    
-    with ApiClient(configuration) as api_client:
-        line_bot_blob_api = MessagingApiBlob(api_client)
-        message_content = line_bot_blob_api.get_message_content(message_id=event.message.id)
-        image_bytes = io.BytesIO(message_content)
-
-    img = Image.open(image_bytes)
-    
-    prompt_with_image = [system_prompt_text, "請根據你看到的圖片，嚴格執行你的 Step 1 (確認式互動)。", img]
-    vision_response = vision_model.generate_content(prompt_with_image)
-    
-    chat = text_model.start_chat(history=[
-        {'role': 'user', 'parts': [system_prompt_text, "這是我上傳的題目圖片，請開始互動。"]},
-        {'role': 'model', 'parts': [vision_response.text]}
-    ])
-    
-    conversation_history[user_id] = chat
-    print(f"為使用者 {user_id} 建立了包含圖片辨識結果的全新對話。")
-
-    with ApiClient(configuration) as api_client:
-        line_bot_api = MessagingApi(api_client)
-        line_bot_api.reply_message_with_http_info(
-            ReplyMessageRequest(reply_token=event.reply_token, messages=[TextMessage(text=vision_response.text)])
-        )
-
-# --- ★★★ 最終的神殿部署版啟動方式 ★★★ ---
-if __name__ == "__main__":
-    # 從環境變數讀取 Render.com 指定的 PORT，如果找不到，才使用 5001 (用於本地測試)
-    port = int(os.environ.get('PORT', 5001))
-    app.run(host='0.0.0.0', port=port)
+                    {'function_response
