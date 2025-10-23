@@ -78,60 +78,48 @@ system_prompt = """
 
 # --- 步驟五：AI 宗師的「神器」(Tools) ---
 #
-# 我們「保留」了這些神器的「定義」，
-# 但「靈魂」 (system_prompt) 已被告知「優先使用提問」。
+# ★★★ 「時光回溯」修正：使用兼容 0.8.5 版本的語法 ★★★
+# (我們不再使用 genai.Tool，而是直接傳遞 FunctionDeclaration 列表)
 #
-# (請注意：`search_private_library` 目前 100% 處於「封存」狀態，
-# 因為我們在「藍圖一」中遇到了 `Version: 0.8.5` 的幽靈。
-# 在我們擊敗那個幽靈之前，這個神器無法被啟動。)
-#
-tools = [
-    # 神器一：Google 搜尋
-    genai.Tool(
-        function_declarations=[
-            genai.FunctionDeclaration(
-                name='google_search',
-                description='當學生詢問非物理專業知識、時事、天氣、或「AI 宗師」無法回答的即時資訊時，使用此工具。',
-                parameters=genai.Schema(
-                    type=genai.Type.OBJECT,
-                    properties={
-                        'query': genai.Schema(type=genai.Type.STRING, description='要搜尋的關鍵字')
-                    },
-                    required=['query']
-                )
-            )
-        ]
-    ),
-    # 神器二：梵蒂岡秘密檔案館 (已封存)
-    genai.Tool(
-        function_declarations=[
-            genai.FunctionDeclaration(
-                name='search_private_library',
-                description='''
-                    當學生詢問「物理觀念」、「定義」、「公式」或「特定教科書內容」時，
-                    「絕對必須」優先使用此工具，在「梵蒂岡秘密檔案館」中搜尋權威答案。
-                    只有在檔案館中「找不到」相關資料時，才使用 google_search 或自己的知識。
-                ''',
-                parameters=genai.Schema(
-                    type=genai.Type.OBJECT,
-                    properties={
-                        'query': genai.Schema(type=genai.Type.STRING, description='要搜尋的物理觀念或問題關鍵字')
-                    },
-                    required=['query']
-                )
-            )
-        ]
-    )
-]
 
-# --- 步驟六：AI 宗師的「大腦」設定 ---
-# (我們使用的是目前最強大、也最穩定的 Gemini 1.5 Flash)
+# 神器一：Google 搜尋
+google_search_func = genai.FunctionDeclaration(
+        name='google_search',
+        description='當學生詢問非物理專業知識、時事、天氣、或「AI 宗師」無法回答的即時資訊時，使用此工具。',
+        parameters=genai.Schema(
+            type=genai.Type.OBJECT,
+            properties={
+                'query': genai.Schema(type=genai.Type.STRING, description='要搜尋的關鍵字')
+            },
+            required=['query']
+        )
+    )
+
+# 神器二：梵蒂岡秘密檔案館 (已封存)
+search_library_func = genai.FunctionDeclaration(
+        name='search_private_library',
+        description='''
+            當學生詢問「物理觀念」、「定義」、「公式」或「特定教科書內容」時，
+            「絕對必須」優先使用此工具，在「梵蒂岡秘密檔案館」中搜尋權威答案。
+            只有在檔案館中「找不到」相關資料時，才使用 google_search 或自己的知識。
+        ''',
+        parameters=genai.Schema(
+            type=genai.Type.OBJECT,
+            properties={
+                'query': genai.Schema(type=genai.Type.STRING, description='要搜尋的物理觀念或問題關鍵字')
+            },
+            required=['query']
+        )
+    )
+
+# --- 步驟六：AI 宗師的「大腦」設定 (修正版) ---
+# (我們將修正後的 FunctionDeclaration 列表傳遞給 tools 參數)
 model = genai.GenerativeModel(
-    model_name='gemini-1.5-flash-latest',
+    model_name='gemini-2.5-pro',
     system_instruction=system_prompt,
-    tools=tools,
+    # ★★★ 修正：直接傳遞 FunctionDeclaration 列表 ★★★
+    tools=[google_search_func, search_library_func],
     safety_settings={
-        # 我們相信學生的提問，將安全限制開到最低
         HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
         HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
         HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
@@ -139,10 +127,10 @@ model = genai.GenerativeModel(
     }
 )
 
-# --- 步驟七：神殿的「記憶體」---
-# (我們目前使用的是「短期記憶」。
-# 在「藍圖三」中，我們將會把它升級為「永久記憶」。)
-chat_sessions = {} # 暫時用一個字典來存放「短期記憶」
+# ★★★ 語法修正完畢 ★★★
+
+# --- 步驟七：神殿的「記憶體」--- (保持不變)
+chat_sessions = {}
 
 # --- 步驟八：神殿的「入口」(Webhook) ---
 # (這是 Render 和 LINE 溝通的唯一通道)
