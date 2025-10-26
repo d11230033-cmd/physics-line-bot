@@ -53,6 +53,7 @@ def load_corpus_from_local_folder():
     try:
         if not os.path.exists(corpus_dir):
             print(f"!!! (RAG) 警告：找不到 '{corpus_dir}' 資料夾。")
+            RAG_CACHE = "" # 即使找不到，也設置緩存
             return ""
 
         for filename in os.listdir(corpus_dir):
@@ -76,14 +77,15 @@ def load_corpus_from_local_folder():
                     print(f"!!! (RAG) 錯誤：讀取 TXT '{filename}' 失敗。錯誤：{txt_e}")
 
         RAG_CACHE = corpus_text # 存入緩存
-        print("--- (RAG) 教科書內容讀取並緩存完畢！ ---")
+        print(f"--- (RAG) 教科書內容讀取並緩存完畢！總共 {len(corpus_text)} 字元 ---")
         return corpus_text
 
     except Exception as e:
         print(f"!!! (RAG) 嚴重錯誤：讀取 'corpus' 資料夾失敗。錯誤：{e}")
+        RAG_CACHE = "" # 出錯時也設置緩存
         return "" # 返回空內容
 
-# --- 步驟四：AI 宗師的「靈魂」核心 (★ 重大修改 ★) ---
+# --- 步驟四：AI 宗師的「靈魂」核心 (★ RAG + 蘇格拉底 ★) ---
 system_prompt = """
 你是一位頂尖的台灣高中物理教學AI，叫做「AI 宗師」。
 你的教學風格是 100% 的「蘇格拉底式教學法」。
@@ -107,30 +109,19 @@ system_prompt = """
 4.  **「保持鼓勵」**：(同前)
 """
 
-# --- 步驟五 & 六：AI 宗師的「大腦」設定 (★ 重大修改：使用 gemini-pro ★) ---
-# (我們在「藍圖三」的偵錯中，已經知道 0.8.5 兼容的是 gemini-pro)
+# --- 步驟五 & 六：AI 宗師的「大腦」設定 (★ 兼容版 ★) ---
 model = genai.GenerativeModel(
-    model_name='gemini-2.5-pro', # ★ 確保使用兼容的模型
+    model_name='gemini-2.5-pro', # ★ 確保使用兼容的 0.8.5 版本模型
     system_instruction=system_prompt,
     safety_settings={
         HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-        # ... (其他安全設定同前) ...
+        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
     }
 )
 
-# --- 步驟七：連接「外部大腦」(Neon 資料庫) ---
-# (這整段「藍圖三」的程式碼保持不變)
-def get_db_connection():
-    # ... (同前) ...
-def initialize_database():
-    # ... (同前) ...
-def get_chat_history(user_id):
-    # ... (同前) ...
-def save_chat_history(user_id, chat_session):
-    # ... (同前) ...
-
-# --- (這段程式碼需要「貼回」您在「藍圖三」中已成功運作的版本) ---
-# (為求完整，我先貼上「藍圖三」的最終修正版)
+# --- 步驟七：連接「外部大腦」(Neon 資料庫) (★ 完整修正版 ★) ---
 
 # 函數：建立資料庫連接
 def get_db_connection():
@@ -202,12 +193,18 @@ def save_chat_history(user_id, chat_session):
 initialize_database()
 load_corpus_from_local_folder() # ★ 啟動時就預先載入教科書！
 
-# --- 步驟八：神殿的「入口」(Webhook) --- (保持不變)
+# --- 步驟八：神殿的「入口」(Webhook) ---
 @app.route("/callback", methods=['POST'])
 def callback():
-    # ... (同前) ...
+    signature = request.headers['X-Line-Signature']
+    body = request.get_data(as_text=True)
+    try:
+        handler.handle(body, signature)
+    except InvalidSignatureError:
+        abort(400)
+    return 'OK'
 
-# --- 步驟九：神殿的「主控室」(處理訊息) (★ 重大修改：植入 RAG ★) ---
+# --- 步驟九：神殿的「主控室」(處理訊息) (★ RAG + 記憶 ★) ---
 @handler.add(MessageEvent, message=(TextMessage, ImageMessage))
 def handle_message(event):
 
@@ -234,7 +231,7 @@ def handle_message(event):
             message_content = line_bot_api.get_message_content(event.message.id)
             image_bytes = io.BytesIO(message_content.content)
             img = Image.open(image_bytes)
-            prompt_parts = [img, user_question] 
+            prompt_parts = [img, user_question] # 舊版 0.8.5 可能不支持 圖文混合
         else:
             user_question = event.message.text
 
@@ -272,7 +269,7 @@ def handle_message(event):
         TextSendMessage(text=final_text)
     )
 
-# --- 步驟十：啟動「神殿」 --- (保持不變)
+# --- 步驟十：啟動「神殿」 ---
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
