@@ -1,6 +1,6 @@
-# --- 「神殿」：AI 宗師的核心 (藍圖三 + 新・藍圖一) ---
+# --- 「神殿」：AI 宗師的核心 (藍圖三 + 新・藍圖一 v2) ---
 #
-# 版本：已植入 Neon 記憶 + 本地 RAG (PyMuPDF)
+# 版本：已植入 Neon 記憶 + 動態本地 RAG (修復 OOM)
 # -----------------------------------
 
 import os
@@ -34,27 +34,21 @@ try:
 except Exception as e:
     print(f"!!! 嚴重錯誤：無法設定 Google API Key。錯誤：{e}")
 
-# --- ★ 新・藍圖一：本地 RAG 函數 ★ ---
+# --- ★ 新・藍圖一：本地 RAG 函數 (v2：動態讀取) ★ ---
 
-# 全局變量，用於緩存教科書內容，避免每次都讀取
-RAG_CACHE = None
+# ★★★ 移除了 RAG_CACHE = None (不再緩存) ★★★
 
 def load_corpus_from_local_folder():
-    global RAG_CACHE
-    # 如果緩存已存在，直接返回，提高效率
-    if RAG_CACHE is not None:
-        print("--- (RAG) 使用緩存的教科書內容 ---")
-        return RAG_CACHE
+    # ★★★ 移除了 RAG_CACHE 檢查 ★★★
 
-    print("--- (RAG) 正在從 'corpus' 資料夾讀取所有 PDF 和 TXT... ---")
+    print("--- (RAG) 正在「動態」從 'corpus' 資料夾讀取所有 PDF 和 TXT... ---")
     corpus_text = ""
     corpus_dir = 'corpus'
 
     try:
         if not os.path.exists(corpus_dir):
             print(f"!!! (RAG) 警告：找不到 '{corpus_dir}' 資料夾。")
-            RAG_CACHE = "" # 即使找不到，也設置緩存
-            return ""
+            return "" # ★ 移除緩存
 
         for filename in os.listdir(corpus_dir):
             filepath = os.path.join(corpus_dir, filename)
@@ -76,14 +70,12 @@ def load_corpus_from_local_folder():
                 except Exception as txt_e:
                     print(f"!!! (RAG) 錯誤：讀取 TXT '{filename}' 失敗。錯誤：{txt_e}")
 
-        RAG_CACHE = corpus_text # 存入緩存
-        print(f"--- (RAG) 教科書內容讀取並緩存完畢！總共 {len(corpus_text)} 字元 ---")
-        return corpus_text
+        print(f"--- (RAG) 教科書內容「動態」讀取完畢！總共 {len(corpus_text)} 字元 ---")
+        return corpus_text # ★ 直接返回文字，不緩存
 
     except Exception as e:
         print(f"!!! (RAG) 嚴重錯誤：讀取 'corpus' 資料夾失敗。錯誤：{e}")
-        RAG_CACHE = "" # 出錯時也設置緩存
-        return "" # 返回空內容
+        return "" # ★ 返回空內容，不緩存
 
 # --- 步驟四：AI 宗師的「靈魂」核心 (★ RAG + 蘇格拉底 ★) ---
 system_prompt = """
@@ -126,7 +118,6 @@ model = genai.GenerativeModel(
 # 函數：建立資料庫連接
 def get_db_connection():
     try:
-        # ★ 確保 DATABASE_URL 中不含 'channel_binding'
         conn = psycopg2.connect(os.environ.get('DATABASE_URL'))
         return conn
     except Exception as e:
@@ -155,19 +146,18 @@ def initialize_database():
 # 函數：讀取聊天紀錄 (兼容 0.8.5 的字典格式)
 def get_chat_history(user_id):
     conn = get_db_connection()
-    history_json = [] # 默認為空列表
+    history_json = [] 
     if conn:
         try:
             with conn.cursor() as cur:
                 cur.execute("SELECT history FROM chat_history WHERE user_id = %s;", (user_id,))
                 result = cur.fetchone()
                 if result and result[0]:
-                    history_json = result[0] # 這是 JSONB 讀取來的字典列表
+                    history_json = result[0] 
         except Exception as e:
             print(f"!!! 錯誤：無法讀取 user_id '{user_id}' 的歷史紀錄。錯誤：{e}")
         finally:
             conn.close()
-    # 0.8.5 版的 start_chat(history=...) 接受字典列表
     return history_json 
 
 # 函數：儲存聊天紀錄 (兼容 0.8.5 的字典格式)
@@ -175,23 +165,22 @@ def save_chat_history(user_id, chat_session):
     conn = get_db_connection()
     if conn:
         try:
-            # 0.8.5 版的 .history 屬性就是字典列表
             history_to_save = chat_session.history 
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO chat_history (user_id, history)
                     VALUES (%s, %s)
                     ON CONFLICT (user_id) DO UPDATE SET history = EXCLUDED.history;
-                """, (user_id, json.dumps(history_to_save))) # 將列表轉為 JSON 字串儲存
+                """, (user_id, json.dumps(history_to_save))) 
                 conn.commit()
         except Exception as e:
             print(f"!!! 錯誤：無法儲存 user_id '{user_id}' 的歷史紀錄。錯誤：{e}")
         finally:
             conn.close()
 
-# 在程式啟動時，嘗試初始化資料庫 和 讀取 RAG！
+# 在程式啟動時，只初始化資料庫
 initialize_database()
-load_corpus_from_local_folder() # ★ 啟動時就預先載入教科書！
+# ★★★ 移除了 load_corpus_from_local_folder() (不再啟動時緩存) ★★★
 
 # --- 步驟八：神殿的「入口」(Webhook) ---
 @app.route("/callback", methods=['POST'])
@@ -222,24 +211,20 @@ def handle_message(event):
 
     # 3. 準備「當前的輸入」
     prompt_parts = []
-    user_question = "" # 用於 RAG
+    user_question = "" 
 
     try:
         if isinstance(event.message, ImageMessage):
-            # (RAG 目前僅支援文字，圖片題暫時不使用 RAG)
             user_question = "老師，這張圖片上的物理問題（如下圖）要怎麼思考？"
-            message_content = line_bot_api.get_message_content(event.message.id)
-            image_bytes = io.BytesIO(message_content.content)
-            img = Image.open(image_bytes)
-            prompt_parts = [img, user_question] # 舊版 0.8.5 可能不支持 圖文混合
+            prompt_parts = [user_question] # 暫時禁用圖片
         else:
             user_question = event.message.text
 
-            # ★ 執行「新・藍圖一」RAG！ ★
-            # 1. 取得教科書內容
+            # ★ 執行「新・藍圖一」(v2：動態讀取) ★
+            print(f"--- (RAG) 收到問題，開始為 user_id '{user_id}' 動態讀取教科書... ---")
             context = load_corpus_from_local_folder() 
+            print(f"--- (RAG) 動態讀取完畢，為 user_id '{user_id}' 構建提示詞... ---")
 
-            # 2. 構建「RAG 提示詞」
             rag_prompt = f"""
             ---「教科書內容」開始---
             {context}
@@ -259,7 +244,6 @@ def handle_message(event):
         save_chat_history(user_id, chat_session)
 
     except Exception as e:
-        # 這裡的 "冥想中" 錯誤，現在也可能是 RAG 讀取失敗
         print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG操作失敗。錯誤：{e}")
         final_text = "抱歉，宗師目前正在檢索記憶/教科書或冥想中，請稍後再試。"
 
