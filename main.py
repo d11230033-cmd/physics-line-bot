@@ -67,7 +67,7 @@ system_prompt = """
 
 # --- 步驟五 & 六：AI 宗師的「大腦」設定 (已移除 Tools) ---
 model = genai.GenerativeModel(
-    model_name='gemini-1.5-flash-latest',
+    model_name='gemini-2.5-pro',
     system_instruction=system_prompt,
     # ★★★ 已移除 tools 參數 ★★★
     safety_settings={
