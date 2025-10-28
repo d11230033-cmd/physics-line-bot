@@ -115,20 +115,41 @@ def get_chat_history(user_id):
             conn.close()
     return history_json 
 
-# 函數：儲存聊天紀錄 (兼容 0.8.5 的字典格式)
+# 函數：儲存聊天紀錄 (★ 修正 JSON 序列化錯誤 ★)
 def save_chat_history(user_id, chat_session):
     conn = get_db_connection()
     if conn:
         try:
-            history_to_save = chat_session.history 
+            # ★★★ 新增：手動將 Content 物件轉換為字典列表 ★★★
+            history_to_save = []
+            if chat_session.history: # 確保 history 存在且非空
+                for content in chat_session.history:
+                    # 檢查 parts 是否存在且可迭代，並提取文字
+                    parts_text = []
+                    if content.parts:
+                        try:
+                            # 嘗試提取 text 屬性
+                            parts_text = [part.text for part in content.parts if hasattr(part, 'text')]
+                        except Exception as part_e:
+                            print(f"!!! 警告：提取 history parts 時出錯: {part_e}。內容: {content}")
+                            # 如果提取 text 失敗，可以考慮存儲其他信息或跳過
+                            # parts_text = ["[無法提取的部分]"] # 或者其他標記
+
+                    # 確保 role 存在
+                    role = content.role if hasattr(content, 'role') else 'unknown' 
+
+                    history_to_save.append({'role': role, 'parts': parts_text})
+            # ★★★ 轉換完畢 ★★★
+
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO chat_history (user_id, history)
                     VALUES (%s, %s)
                     ON CONFLICT (user_id) DO UPDATE SET history = EXCLUDED.history;
-                """, (user_id, json.dumps(history_to_save))) 
+                """, (user_id, json.dumps(history_to_save))) # ★ 現在存儲的是字典列表的 JSON 字串
                 conn.commit()
         except Exception as e:
+            # ★ 這裡的錯誤現在更可能是資料庫本身的錯誤
             print(f"!!! 錯誤：無法儲存 user_id '{user_id}' 的歷史紀錄。錯誤：{e}")
         finally:
             conn.close()
