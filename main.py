@@ -1,6 +1,6 @@
-# --- 「神殿」：AI 宗師的核心 (藍圖三 + 新・藍圖一 v2) ---
+# --- 「神殿」：AI 宗師的核心 (藍圖三：穩定版) ---
 #
-# 版本：已植入 Neon 記憶 + 動態本地 RAG (修復 OOM)
+# 版本：已移除「本地 RAG」以修復 OOM (Out of Memory) 錯誤
 # -----------------------------------
 
 import os
@@ -15,7 +15,7 @@ from PIL import Image
 import io
 import psycopg2 # 藍圖三：資料庫工具
 import json     # 藍圖三：資料庫工具
-import fitz     # ★ 新・藍圖一：PDF 閱讀工具 (PyMuPDF) ★
+# ★ 移除了 import fitz ★
 
 # --- 步驟一：神殿的鑰匙 (從 Render.com 讀取) ---
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
@@ -34,50 +34,9 @@ try:
 except Exception as e:
     print(f"!!! 嚴重錯誤：無法設定 Google API Key。錯誤：{e}")
 
-# --- ★ 新・藍圖一：本地 RAG 函數 (v2：動態讀取) ★ ---
+# --- ★ 移除了 load_corpus_from_local_folder() 函數 ★ ---
 
-# ★★★ 移除了 RAG_CACHE = None (不再緩存) ★★★
-
-def load_corpus_from_local_folder():
-    # ★★★ 移除了 RAG_CACHE 檢查 ★★★
-
-    print("--- (RAG) 正在「動態」從 'corpus' 資料夾讀取所有 PDF 和 TXT... ---")
-    corpus_text = ""
-    corpus_dir = 'corpus'
-
-    try:
-        if not os.path.exists(corpus_dir):
-            print(f"!!! (RAG) 警告：找不到 '{corpus_dir}' 資料夾。")
-            return "" # ★ 移除緩存
-
-        for filename in os.listdir(corpus_dir):
-            filepath = os.path.join(corpus_dir, filename)
-
-            if filename.endswith('.pdf'):
-                print(f"  > (RAG) 正在讀取 PDF: {filename}")
-                try:
-                    with fitz.open(filepath) as doc:
-                        for page in doc:
-                            corpus_text += page.get_text() + "\n\n"
-                except Exception as pdf_e:
-                    print(f"!!! (RAG) 錯誤：讀取 PDF '{filename}' 失敗。錯誤：{pdf_e}")
-
-            elif filename.endswith('.txt'):
-                print(f"  > (RAG) 正在讀取 TXT: {filename}")
-                try:
-                    with open(filepath, 'r', encoding='utf-8') as f:
-                        corpus_text += f.read() + "\n\n"
-                except Exception as txt_e:
-                    print(f"!!! (RAG) 錯誤：讀取 TXT '{filename}' 失敗。錯誤：{txt_e}")
-
-        print(f"--- (RAG) 教科書內容「動態」讀取完畢！總共 {len(corpus_text)} 字元 ---")
-        return corpus_text # ★ 直接返回文字，不緩存
-
-    except Exception as e:
-        print(f"!!! (RAG) 嚴重錯誤：讀取 'corpus' 資料夾失敗。錯誤：{e}")
-        return "" # ★ 返回空內容，不緩存
-
-# --- 步驟四：AI 宗師的「靈魂」核心 (★ RAG + 蘇格拉底 ★) ---
+# --- 步驟四：AI 宗師的「靈魂」核心 (★ 恢復無 RAG 版 ★) ---
 system_prompt = """
 你是一位頂尖的台灣高中物理教學AI，叫做「AI 宗師」。
 你的教學風格是 100% 的「蘇格拉底式教學法」。
@@ -88,16 +47,12 @@ system_prompt = """
 3.  你的 **「所有」** 回應，**「必須」** 以一個「引導性的問題」來結束。
 4.  **「絕對禁止」** 說出「答案是...」或「你應該要...」。
 
-# --- ★ 「新・藍圖一」RAG 指令 ★ ---
-5.  在每次回答之前，你 **「必須」** 優先查閱我提供給你的「教科書內容」。
-6.  你的提問 **「必須」** 100% 基於這份「教科書內容」。
-7.  如果「教科書內容」中**沒有**相關資訊，你可以禮貌地告知學生「這個問題超出了目前教材的範圍」，然後再嘗試用你的「基礎知識」提問。
-8.  **「絕對禁止」** 提及「教科書內容」這幾個字，你要假裝這些知識是你**自己**知道的。
+# --- ★ 移除了 RAG 相關指令 ★ ---
 
 # --- 你的「教學流程」---
 1.  **「確認問題」**：(同前)
-2.  **「拆解問題」**：(同前, 但基於「教科書內容」)
-3.  **「逐步引導」**：(同前, 但基於「教科書內容」)
+2.  **「拆解問題」**：(同前)
+3.  **「逐步引導」**：(同前)
 4.  **「保持鼓勵」**：(同前)
 """
 
@@ -180,7 +135,7 @@ def save_chat_history(user_id, chat_session):
 
 # 在程式啟動時，只初始化資料庫
 initialize_database()
-# ★★★ 移除了 load_corpus_from_local_folder() (不再啟動時緩存) ★★★
+# ★ 移除了 load_corpus_from_local_folder() ★
 
 # --- 步驟八：神殿的「入口」(Webhook) ---
 @app.route("/callback", methods=['POST'])
@@ -193,7 +148,7 @@ def callback():
         abort(400)
     return 'OK'
 
-# --- 步驟九：神殿的「主控室」(處理訊息) (★ RAG + 記憶 ★) ---
+# --- 步驟九：神殿的「主控室」(處理訊息) (★ 恢復「藍圖三」穩定版 ★) ---
 @handler.add(MessageEvent, message=(TextMessage, ImageMessage))
 def handle_message(event):
 
@@ -211,7 +166,6 @@ def handle_message(event):
 
     # 3. 準備「當前的輸入」
     prompt_parts = []
-    user_question = "" 
 
     try:
         if isinstance(event.message, ImageMessage):
@@ -219,22 +173,9 @@ def handle_message(event):
             prompt_parts = [user_question] # 暫時禁用圖片
         else:
             user_question = event.message.text
+            prompt_parts = [user_question]
 
-            # ★ 執行「新・藍圖一」(v2：動態讀取) ★
-            print(f"--- (RAG) 收到問題，開始為 user_id '{user_id}' 動態讀取教科書... ---")
-            context = load_corpus_from_local_folder() 
-            print(f"--- (RAG) 動態讀取完畢，為 user_id '{user_id}' 構建提示詞... ---")
-
-            rag_prompt = f"""
-            ---「教科書內容」開始---
-            {context}
-            ---「教科書內容」結束---
-
-            學生問題：「{user_question}」
-
-            (請你嚴格遵守 System Prompt 中的指令，100% 基於上述「教科書內容」，用「蘇格拉底式提問」來回應學生的問題。)
-            """
-            prompt_parts = [rag_prompt]
+        # ★ 移除了 RAG 相關的所有程式碼 ★
 
         # 4. 呼叫 Gemini，進行「當前的對話」
         response = chat_session.send_message(prompt_parts)
@@ -244,8 +185,8 @@ def handle_message(event):
         save_chat_history(user_id, chat_session)
 
     except Exception as e:
-        print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG操作失敗。錯誤：{e}")
-        final_text = "抱歉，宗師目前正在檢索記憶/教科書或冥想中，請稍後再試。"
+        print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫操作失敗。錯誤：{e}")
+        final_text = "抱歉，宗師目前正在檢索記憶或冥想中，請稍後再試。"
 
     # 6. 回覆使用者
     line_bot_api.reply_message(
