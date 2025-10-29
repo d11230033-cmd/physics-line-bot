@@ -1,6 +1,6 @@
 # --- 「神殿」：AI 宗師的核心 (藍圖三 + 最終・藍圖一) ---
 #
-# 版本：已植入 Neon 記憶 + 向量 RAG (pgvector)
+# 版本：已植入 Neon 記憶 + Gemini 向量 RAG (pgvector)
 # -----------------------------------
 
 import os
@@ -16,9 +16,9 @@ import io
 import psycopg2 # 藍圖三：資料庫工具
 import json     # 藍圖三：資料庫工具
 
-# --- ★ 第四紀元：向量 RAG 工具 ★ ---
+# --- ★ 第五紀元：向量 RAG 工具 ★ ---
 from pgvector.psycopg2 import register_vector
-from sentence_transformers import SentenceTransformer
+# ★ 移除了 SentenceTransformer (解決 OOM)
 
 # --- 步驟一：神殿的鑰匙 (從 Render.com 讀取) ---
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
@@ -37,15 +37,11 @@ try:
 except Exception as e:
     print(f"!!! 嚴重錯誤：無法設定 Google API Key。錯誤：{e}")
 
-# --- ★ 第四紀元：載入「向量轉換」模型 (啟動時載入一次) ★ ---
-# (這會佔用一些記憶體，但 100% 低於「整本 PDF」)
-try:
-    print("--- (AI) 正在載入向量模型 'all-MiniLM-L6-v2'... ---")
-    vector_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
-    print("--- (AI) 向量模型載入成功！ ---")
-except Exception as e:
-    print(f"!!! 嚴重錯誤：無法載入 SentenceTransformer 模型。錯誤：{e}")
-    vector_model = None
+# --- ★ 第五紀元：定義「向量轉換」模型 (Gemini) ★ ---
+EMBEDDING_MODEL = 'models/text-embedding-004' # (0.8.5 兼容)
+VECTOR_DIMENSION = 768 # ★ 向量維度 768
+
+# ★ 移除了 (AI) 載入向量模型 (解決 OOM)
 
 # --- 步驟四：AI 宗師的「靈魂」核心 (★ RAG + 蘇格拉底 ★) ---
 system_prompt = """
@@ -58,7 +54,7 @@ system_prompt = """
 3.  你的 **「所有」** 回應，**「必須」** 以一個「引導性的問題」來結束。
 4.  **「絕對禁止」** 說出「答案是...」或「你應該要...」。
 
-# --- ★ 「第四紀元」RAG 指令 ★ ---
+# --- ★ 「第五紀元」RAG 指令 ★ ---
 5.  在每次回答之前，你 **「必須」** 優先查閱我提供給你的「相關段落」。
 6.  你的提問 **「必須」** 100% 基於這份「相關段落」。
 7.  如果「相關段落」中**沒有**資訊 (顯示為 'N/A')，你可以禮貌地告知學生「這個問題超出了目前教材的範圍」，然後再嘗試用你的「基礎知識」提問。
@@ -107,15 +103,15 @@ def initialize_database():
                 """)
                 print("--- (SQL) 表格 'chat_history' 確認/建立成功 ---")
 
-                # 建立「向量索引」表格 (以防萬一)
+                # 建立「向量索引」表格 (★ 768 維 ★)
                 cur.execute(f"""
                     CREATE TABLE IF NOT EXISTS physics_vectors (
                         id SERIAL PRIMARY KEY,
                         content TEXT,
-                        embedding VECTOR(384)
+                        embedding VECTOR({VECTOR_DIMENSION})
                     );
                 """)
-                print("--- (SQL) 表格 'physics_vectors' 確認/建立成功 ---")
+                print(f"--- (SQL) 表格 'physics_vectors' (維度 {VECTOR_DIMENSION}) 確認/建立成功 ---")
 
                 conn.commit()
         except Exception as e:
@@ -170,18 +166,22 @@ def save_chat_history(user_id, chat_session):
         finally:
             conn.close()
 
-# --- ★ 第四紀元：向量 RAG 搜尋函數 ★ ---
+# --- ★ 第五紀元：Gemini 向量 RAG 搜尋函數 ★ ---
 def find_relevant_chunks(query_text, k=3):
-    """搜尋最相關的 k 個教科書段落"""
-    if not vector_model:
-        print("!!! (RAG) 錯誤：向量模型未載入，無法執行搜尋。")
-        return "N/A" # 返回 N/A
+    """搜尋最相關的 k 個教科書段落 (使用 Gemini Embedding)"""
 
     conn = None
     try:
-        print(f"--- (RAG) 正在為問題「{query_text[:20]}...」產生向量... ---")
-        # 1. 將「學生的問題」轉換為向量
-        query_embedding = vector_model.encode(query_text)
+        print(f"--- (RAG) 正在為問題「{query_text[:20]}...」向 Gemini 請求向量... ---")
+
+        # 1. 將「學生的問題」轉換為向量 (★ 使用 Gemini API ★)
+        # (0.8.5 版的語法)
+        result = genai.embed_content(
+            model=EMBEDDING_MODEL,
+            content=[query_text], # ★ 內容必須是列表
+            task_type="retrieval_query" # ★ 任務類型是「搜尋」
+        )
+        query_embedding = result['embedding'][0] # ★ 取得第一個 (也是唯一一個) 向量
 
         print("--- (RAG) 正在連接資料庫以搜尋向量... ---")
         conn = get_db_connection()
@@ -193,7 +193,6 @@ def find_relevant_chunks(query_text, k=3):
 
         with conn.cursor() as cur:
             # 3. 執行「向量相似度搜尋」
-            # (使用 <-> 運算子，即 L2 歐幾里得距離)
             cur.execute(
                 "SELECT content FROM physics_vectors ORDER BY embedding <-> %s LIMIT %s",
                 (query_embedding, k)
@@ -216,7 +215,7 @@ def find_relevant_chunks(query_text, k=3):
         if conn:
             conn.close()
 
-# 在程式啟動時，只初始化資料庫 (模型已在頂層載入)
+# 在程式啟動時，只初始化資料庫
 initialize_database()
 
 # --- 步驟八：神殿的「入口」(Webhook) ---
@@ -257,7 +256,7 @@ def handle_message(event):
         else:
             user_question = event.message.text
 
-            # ★ 執行「第四紀元」向量 RAG！ ★
+            # ★ 執行「第五紀元」向量 RAG！ ★
             context = find_relevant_chunks(user_question)
 
             # 構建「RAG 提示詞」
