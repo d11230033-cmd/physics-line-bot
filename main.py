@@ -249,38 +249,58 @@ def handle_message(event):
     prompt_parts = []
     user_question = "" 
 
-    try:
-        if isinstance(event.message, ImageMessage):
-            user_question = "老師，這張圖片上的物理問題（如下圖）要怎麼思考？"
-            prompt_parts = [user_question] # 暫時禁用圖片
-        else:
-            user_question = event.message.text
+   # --- 從 try: 開始替換 ---
+try:
+    if isinstance(event.message, ImageMessage):
+        # ★★★【視覺恢復點 1】★★★
+        # 處理圖片訊息：直接將圖片傳給 Gemini，不使用 RAG
+        print(f"--- (圖像) 收到來自 user_id '{user_id}' 的圖片訊息 ---")
+        user_question = "老師，這張圖片上的物理問題（如下圖）要怎麼思考？"
+        message_content = line_bot_api.get_message_content(event.message.id)
+        image_bytes = io.BytesIO(message_content.content)
+        img = Image.open(image_bytes)
 
-            # ★ 執行「第五紀元」向量 RAG！ ★
-            context = find_relevant_chunks(user_question)
+        # ★★★【視覺恢復點 2】★★★
+        # 將「文字」和「圖片」都放入 prompt_parts！
+        # (Gemini 通常建議圖片在前，或明確指定)
+        prompt_parts = [user_question, img] 
+        print(f"--- (圖像) 正在將圖片傳送給 Gemini... ---")
 
-            # 構建「RAG 提示詞」
-            rag_prompt = f"""
-            ---「相關段落」開始---
-            {context}
-            ---「相關段落」結束---
+    else: # ★ 處理文字訊息：使用 RAG ★
+        user_question = event.message.text
+        print(f"--- (文字 RAG) 收到來自 user_id '{user_id}' 的文字訊息，開始 RAG 流程... ---")
 
-            學生問題：「{user_question}」
+        # ★ 執行「第五紀元」向量 RAG！ ★
+        context = find_relevant_chunks(user_question)
 
-            (請你嚴格遵守 System Prompt 中的指令，100% 基於上述「相關段落」，用「蘇格拉底式提問」來回應學生的問題。)
-            """
-            prompt_parts = [rag_prompt]
+        # 構建「RAG 提示詞」
+        rag_prompt = f"""
+        ---「相關段落」開始---
+        {context}
+        ---「相關段落」結束---
 
-        # 4. 呼叫 Gemini，進行「當前的對話」
-        response = chat_session.send_message(prompt_parts)
-        final_text = response.text
+        學生問題：「{user_question}」
 
-        # 5. 儲存「更新後的記憶」(藍圖三)
-        save_chat_history(user_id, chat_session)
+        (請你嚴格遵守 System Prompt 中的指令，100% 基於上述「相關段落」，用「蘇格拉底式提問」來回應學生的問題。)
+        """
+        prompt_parts = [rag_prompt]
 
-    except Exception as e:
-        print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG操作失敗。錯誤：{e}")
-        final_text = "抱歉，宗師目前正在檢索記憶/教科書或冥想中，請稍後再試。"
+    # 4. 呼叫 Gemini，進行「當前的對話」
+    # (無論是圖片還是 RAG 文字，都用同一個 chat_session)
+    print(f"--- (Gemini) 正在呼叫 Gemini API... ---")
+    response = chat_session.send_message(prompt_parts)
+    final_text = response.text
+    print(f"--- (Gemini) Gemini API 回應成功 ---")
+
+    # 5. 儲存「更新後的記憶」(藍圖三)
+    print(f"--- (記憶) 正在儲存 user_id '{user_id}' 的對話紀錄... ---")
+    save_chat_history(user_id, chat_session)
+    print(f"--- (記憶) 對話紀錄儲存成功 ---")
+
+except Exception as e:
+    print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG操作失敗。錯誤：{e}")
+    final_text = "抱歉，宗師目前正在檢索記憶/教科書或冥想中，請稍後再試。"
+# --- 替換到 except Exception as e: 的下一行 ---
 
     # 6. 回覆使用者
     line_bot_api.reply_message(
