@@ -1,6 +1,6 @@
-# --- 「神殿」：AI 宗師的核心 (藍圖三：穩定版) ---
+# --- 「神殿」：AI 宗師的核心 (藍圖三 + 最終・藍圖一) ---
 #
-# 版本：已移除「本地 RAG」以修復 OOM (Out of Memory) 錯誤
+# 版本：已植入 Neon 記憶 + 向量 RAG (pgvector)
 # -----------------------------------
 
 import os
@@ -15,7 +15,10 @@ from PIL import Image
 import io
 import psycopg2 # 藍圖三：資料庫工具
 import json     # 藍圖三：資料庫工具
-# ★ 移除了 import fitz ★
+
+# --- ★ 第四紀元：向量 RAG 工具 ★ ---
+from pgvector.psycopg2 import register_vector
+from sentence_transformers import SentenceTransformer
 
 # --- 步驟一：神殿的鑰匙 (從 Render.com 讀取) ---
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
@@ -34,9 +37,17 @@ try:
 except Exception as e:
     print(f"!!! 嚴重錯誤：無法設定 Google API Key。錯誤：{e}")
 
-# --- ★ 移除了 load_corpus_from_local_folder() 函數 ★ ---
+# --- ★ 第四紀元：載入「向量轉換」模型 (啟動時載入一次) ★ ---
+# (這會佔用一些記憶體，但 100% 低於「整本 PDF」)
+try:
+    print("--- (AI) 正在載入向量模型 'all-MiniLM-L6-v2'... ---")
+    vector_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+    print("--- (AI) 向量模型載入成功！ ---")
+except Exception as e:
+    print(f"!!! 嚴重錯誤：無法載入 SentenceTransformer 模型。錯誤：{e}")
+    vector_model = None
 
-# --- 步驟四：AI 宗師的「靈魂」核心 (★ 恢復無 RAG 版 ★) ---
+# --- 步驟四：AI 宗師的「靈魂」核心 (★ RAG + 蘇格拉底 ★) ---
 system_prompt = """
 你是一位頂尖的台灣高中物理教學AI，叫做「AI 宗師」。
 你的教學風格是 100% 的「蘇格拉底式教學法」。
@@ -47,13 +58,11 @@ system_prompt = """
 3.  你的 **「所有」** 回應，**「必須」** 以一個「引導性的問題」來結束。
 4.  **「絕對禁止」** 說出「答案是...」或「你應該要...」。
 
-# --- ★ 移除了 RAG 相關指令 ★ ---
-
-# --- 你的「教學流程」---
-1.  **「確認問題」**：(同前)
-2.  **「拆解問題」**：(同前)
-3.  **「逐步引導」**：(同前)
-4.  **「保持鼓勵」**：(同前)
+# --- ★ 「第四紀元」RAG 指令 ★ ---
+5.  在每次回答之前，你 **「必須」** 優先查閱我提供給你的「相關段落」。
+6.  你的提問 **「必須」** 100% 基於這份「相關段落」。
+7.  如果「相關段落」中**沒有**資訊 (顯示為 'N/A')，你可以禮貌地告知學生「這個問題超出了目前教材的範圍」，然後再嘗試用你的「基礎知識」提問。
+8.  **「絕對禁止」** 提及「相關段落」這幾個字，你要假裝這些知識是你**自己**知道的。
 """
 
 # --- 步驟五 & 六：AI 宗師的「大腦」設定 (★ 兼容版 ★) ---
@@ -73,26 +82,42 @@ model = genai.GenerativeModel(
 # 函數：建立資料庫連接
 def get_db_connection():
     try:
-        conn = psycopg2.connect(os.environ.get('DATABASE_URL'))
+        conn = psycopg2.connect(DATABASE_URL)
         return conn
     except Exception as e:
         print(f"!!! 嚴重錯誤：無法連接到資料庫。錯誤：{e}")
         return None
 
-# 函數：初始化資料庫（如果表格不存在就建立）
+# 函數：初始化資料庫（★ 升級：同時註冊 vector ★）
 def initialize_database():
     conn = get_db_connection()
     if conn:
         try:
+            # ★ 註冊 pgvector (必須在建立游標「之前」)
+            register_vector(conn)
+            print("--- (SQL) `register_vector` 成功 ---")
+
             with conn.cursor() as cur:
+                # 建立「聊天紀錄」表格
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS chat_history (
                         user_id TEXT PRIMARY KEY,
                         history JSONB
                     );
                 """)
+                print("--- (SQL) 表格 'chat_history' 確認/建立成功 ---")
+
+                # 建立「向量索引」表格 (以防萬一)
+                cur.execute(f"""
+                    CREATE TABLE IF NOT EXISTS physics_vectors (
+                        id SERIAL PRIMARY KEY,
+                        content TEXT,
+                        embedding VECTOR(384)
+                    );
+                """)
+                print("--- (SQL) 表格 'physics_vectors' 確認/建立成功 ---")
+
                 conn.commit()
-            print("--- 資料庫表格 'chat_history' 確認/建立成功 ---")
         except Exception as e:
             print(f"!!! 錯誤：無法初始化資料庫表格。錯誤：{e}")
         finally:
@@ -120,43 +145,79 @@ def save_chat_history(user_id, chat_session):
     conn = get_db_connection()
     if conn:
         try:
-            # ★★★ 新增：手動將 Content 物件轉換為字典列表 ★★★
             history_to_save = []
-            if chat_session.history: # 確保 history 存在且非空
+            if chat_session.history: 
                 for content in chat_session.history:
-                    # 檢查 parts 是否存在且可迭代，並提取文字
                     parts_text = []
                     if content.parts:
                         try:
-                            # 嘗試提取 text 屬性
                             parts_text = [part.text for part in content.parts if hasattr(part, 'text')]
                         except Exception as part_e:
                             print(f"!!! 警告：提取 history parts 時出錯: {part_e}。內容: {content}")
-                            # 如果提取 text 失敗，可以考慮存儲其他信息或跳過
-                            # parts_text = ["[無法提取的部分]"] # 或者其他標記
 
-                    # 確保 role 存在
                     role = content.role if hasattr(content, 'role') else 'unknown' 
-
                     history_to_save.append({'role': role, 'parts': parts_text})
-            # ★★★ 轉換完畢 ★★★
 
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO chat_history (user_id, history)
                     VALUES (%s, %s)
                     ON CONFLICT (user_id) DO UPDATE SET history = EXCLUDED.history;
-                """, (user_id, json.dumps(history_to_save))) # ★ 現在存儲的是字典列表的 JSON 字串
+                """, (user_id, json.dumps(history_to_save)))
                 conn.commit()
         except Exception as e:
-            # ★ 這裡的錯誤現在更可能是資料庫本身的錯誤
             print(f"!!! 錯誤：無法儲存 user_id '{user_id}' 的歷史紀錄。錯誤：{e}")
         finally:
             conn.close()
 
-# 在程式啟動時，只初始化資料庫
+# --- ★ 第四紀元：向量 RAG 搜尋函數 ★ ---
+def find_relevant_chunks(query_text, k=3):
+    """搜尋最相關的 k 個教科書段落"""
+    if not vector_model:
+        print("!!! (RAG) 錯誤：向量模型未載入，無法執行搜尋。")
+        return "N/A" # 返回 N/A
+
+    conn = None
+    try:
+        print(f"--- (RAG) 正在為問題「{query_text[:20]}...」產生向量... ---")
+        # 1. 將「學生的問題」轉換為向量
+        query_embedding = vector_model.encode(query_text)
+
+        print("--- (RAG) 正在連接資料庫以搜尋向量... ---")
+        conn = get_db_connection()
+        if not conn:
+            return "N/A"
+
+        # 2. 註冊 pgvector (每次連接都必須做)
+        register_vector(conn)
+
+        with conn.cursor() as cur:
+            # 3. 執行「向量相似度搜尋」
+            # (使用 <-> 運算子，即 L2 歐幾里得距離)
+            cur.execute(
+                "SELECT content FROM physics_vectors ORDER BY embedding <-> %s LIMIT %s",
+                (query_embedding, k)
+            )
+            results = cur.fetchall()
+
+        if not results:
+            print("--- (RAG) 警告：在資料庫中找不到相關段落。 ---")
+            return "N/A"
+
+        # 4. 將「相關段落」組合成一個「上下文」
+        context = "\n\n---\n\n".join([row[0] for row in results])
+        print(f"--- (RAG) 成功找到 {len(results)} 個相關段落！ ---")
+        return context
+
+    except Exception as e:
+        print(f"!!! (RAG) 嚴重錯誤：在 `find_relevant_chunks` 中失敗。錯誤：{e}")
+        return "N/A"
+    finally:
+        if conn:
+            conn.close()
+
+# 在程式啟動時，只初始化資料庫 (模型已在頂層載入)
 initialize_database()
-# ★ 移除了 load_corpus_from_local_folder() ★
 
 # --- 步驟八：神殿的「入口」(Webhook) ---
 @app.route("/callback", methods=['POST'])
@@ -169,7 +230,7 @@ def callback():
         abort(400)
     return 'OK'
 
-# --- 步驟九：神殿的「主控室」(處理訊息) (★ 恢復「藍圖三」穩定版 ★) ---
+# --- 步驟九：神殿的「主控室」(處理訊息) (★ 最終 RAG + 記憶 ★) ---
 @handler.add(MessageEvent, message=(TextMessage, ImageMessage))
 def handle_message(event):
 
@@ -187,6 +248,7 @@ def handle_message(event):
 
     # 3. 準備「當前的輸入」
     prompt_parts = []
+    user_question = "" 
 
     try:
         if isinstance(event.message, ImageMessage):
@@ -194,9 +256,21 @@ def handle_message(event):
             prompt_parts = [user_question] # 暫時禁用圖片
         else:
             user_question = event.message.text
-            prompt_parts = [user_question]
 
-        # ★ 移除了 RAG 相關的所有程式碼 ★
+            # ★ 執行「第四紀元」向量 RAG！ ★
+            context = find_relevant_chunks(user_question)
+
+            # 構建「RAG 提示詞」
+            rag_prompt = f"""
+            ---「相關段落」開始---
+            {context}
+            ---「相關段落」結束---
+
+            學生問題：「{user_question}」
+
+            (請你嚴格遵守 System Prompt 中的指令，100% 基於上述「相關段落」，用「蘇格拉底式提問」來回應學生的問題。)
+            """
+            prompt_parts = [rag_prompt]
 
         # 4. 呼叫 Gemini，進行「當前的對話」
         response = chat_session.send_message(prompt_parts)
@@ -206,8 +280,8 @@ def handle_message(event):
         save_chat_history(user_id, chat_session)
 
     except Exception as e:
-        print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫操作失敗。錯誤：{e}")
-        final_text = "抱歉，宗師目前正在檢索記憶或冥想中，請稍後再試。"
+        print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG操作失敗。錯誤：{e}")
+        final_text = "抱歉，宗師目前正在檢索記憶/教科書或冥想中，請稍後再試。"
 
     # 6. 回覆使用者
     line_bot_api.reply_message(
