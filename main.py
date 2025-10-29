@@ -1,6 +1,6 @@
-# --- 「神殿」：AI 宗師的核心 (藍圖三 + 最終・藍圖一) ---
+# --- 「神殿」：AI 宗師的核心 (藍圖三 + 最終・藍圖一 v3) ---
 #
-# 版本：已植入 Neon 記憶 + Gemini 向量 RAG (pgvector)
+# 版本：Neon 記憶 + Gemini 向量 RAG + 視覺神經 + 回覆神經
 # -----------------------------------
 
 import os
@@ -18,7 +18,6 @@ import json     # 藍圖三：資料庫工具
 
 # --- ★ 第五紀元：向量 RAG 工具 ★ ---
 from pgvector.psycopg2 import register_vector
-# ★ 移除了 SentenceTransformer (解決 OOM)
 
 # --- 步驟一：神殿的鑰匙 (從 Render.com 讀取) ---
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
@@ -40,8 +39,6 @@ except Exception as e:
 # --- ★ 第五紀元：定義「向量轉換」模型 (Gemini) ★ ---
 EMBEDDING_MODEL = 'models/text-embedding-004' # (0.8.5 兼容)
 VECTOR_DIMENSION = 768 # ★ 向量維度 768
-
-# ★ 移除了 (AI) 載入向量模型 (解決 OOM)
 
 # --- 步驟四：AI 宗師的「靈魂」核心 (★ RAG + 蘇格拉底 ★) ---
 system_prompt = """
@@ -75,7 +72,6 @@ model = genai.GenerativeModel(
 
 # --- 步驟七：連接「外部大腦」(Neon 資料庫) (★ 完整修正版 ★) ---
 
-# 函數：建立資料庫連接
 def get_db_connection():
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -84,17 +80,14 @@ def get_db_connection():
         print(f"!!! 嚴重錯誤：無法連接到資料庫。錯誤：{e}")
         return None
 
-# 函數：初始化資料庫（★ 升級：同時註冊 vector ★）
 def initialize_database():
     conn = get_db_connection()
     if conn:
         try:
-            # ★ 註冊 pgvector (必須在建立游標「之前」)
             register_vector(conn)
             print("--- (SQL) `register_vector` 成功 ---")
 
             with conn.cursor() as cur:
-                # 建立「聊天紀錄」表格
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS chat_history (
                         user_id TEXT PRIMARY KEY,
@@ -103,7 +96,6 @@ def initialize_database():
                 """)
                 print("--- (SQL) 表格 'chat_history' 確認/建立成功 ---")
 
-                # 建立「向量索引」表格 (★ 768 維 ★)
                 cur.execute(f"""
                     CREATE TABLE IF NOT EXISTS physics_vectors (
                         id SERIAL PRIMARY KEY,
@@ -119,7 +111,6 @@ def initialize_database():
         finally:
             conn.close()
 
-# 函數：讀取聊天紀錄 (兼容 0.8.5 的字典格式)
 def get_chat_history(user_id):
     conn = get_db_connection()
     history_json = [] 
@@ -136,7 +127,6 @@ def get_chat_history(user_id):
             conn.close()
     return history_json 
 
-# 函數：儲存聊天紀錄 (★ 修正 JSON 序列化錯誤 ★)
 def save_chat_history(user_id, chat_session):
     conn = get_db_connection()
     if conn:
@@ -166,33 +156,27 @@ def save_chat_history(user_id, chat_session):
         finally:
             conn.close()
 
-# --- ★ 第五紀元：Gemini 向量 RAG 搜尋函數 ★ ---
 def find_relevant_chunks(query_text, k=3):
     """搜尋最相關的 k 個教科書段落 (使用 Gemini Embedding)"""
 
     conn = None
     try:
         print(f"--- (RAG) 正在為問題「{query_text[:20]}...」向 Gemini 請求向量... ---")
-
-        # 1. 將「學生的問題」轉換為向量 (★ 使用 Gemini API ★)
-        # (0.8.5 版的語法)
         result = genai.embed_content(
             model=EMBEDDING_MODEL,
-            content=[query_text], # ★ 內容必須是列表
-            task_type="retrieval_query" # ★ 任務類型是「搜尋」
+            content=[query_text], 
+            task_type="retrieval_query" 
         )
-        query_embedding = result['embedding'][0] # ★ 取得第一個 (也是唯一一個) 向量
+        query_embedding = result['embedding'][0] 
 
         print("--- (RAG) 正在連接資料庫以搜尋向量... ---")
         conn = get_db_connection()
         if not conn:
             return "N/A"
 
-        # 2. 註冊 pgvector (每次連接都必須做)
         register_vector(conn)
 
         with conn.cursor() as cur:
-            # 3. 執行「向量相似度搜尋」
             cur.execute(
                 "SELECT content FROM physics_vectors ORDER BY embedding <-> %s LIMIT %s",
                 (query_embedding, k)
@@ -203,7 +187,6 @@ def find_relevant_chunks(query_text, k=3):
             print("--- (RAG) 警告：在資料庫中找不到相關段落。 ---")
             return "N/A"
 
-        # 4. 將「相關段落」組合成一個「上下文」
         context = "\n\n---\n\n".join([row[0] for row in results])
         print(f"--- (RAG) 成功找到 {len(results)} 個相關段落！ ---")
         return context
@@ -215,7 +198,6 @@ def find_relevant_chunks(query_text, k=3):
         if conn:
             conn.close()
 
-# 在程式啟動時，只初始化資料庫
 initialize_database()
 
 # --- 步驟八：神殿的「入口」(Webhook) ---
@@ -229,16 +211,16 @@ def callback():
         abort(400)
     return 'OK'
 
-# --- 步驟九：神殿的「主控室」(處理訊息) (★ 最終 RAG + 記憶 ★) ---
+# --- 步驟九：神殿的「主控室」(處理訊息) (★ 最終完整版 ★) ---
 @handler.add(MessageEvent, message=(TextMessage, ImageMessage))
-def handle_message(event):
+def handle_message(event): # 'event' 在這裡定義
 
     user_id = event.source.user_id
 
-    # 1. 讀取「過去的記憶」(藍圖三)
+    # 1. 讀取「過去的記憶」
     past_history = get_chat_history(user_id)
 
-    # 2. 根據「記憶」開啟「對話」(藍圖三)
+    # 2. 根據「記憶」開啟「對話」
     try:
          chat_session = model.start_chat(history=past_history)
     except Exception as start_chat_e:
@@ -249,64 +231,55 @@ def handle_message(event):
     prompt_parts = []
     user_question = "" 
 
-   # --- 從 try: 開始替換 ---
-try:
-    if isinstance(event.message, ImageMessage):
-        # ★★★【視覺恢復點 1】★★★
-        # 處理圖片訊息：直接將圖片傳給 Gemini，不使用 RAG
-        print(f"--- (圖像) 收到來自 user_id '{user_id}' 的圖片訊息 ---")
-        user_question = "老師，這張圖片上的物理問題（如下圖）要怎麼思考？"
-        message_content = line_bot_api.get_message_content(event.message.id)
-        image_bytes = io.BytesIO(message_content.content)
-        img = Image.open(image_bytes)
+    try:
+        if isinstance(event.message, ImageMessage):
+            # 處理圖片訊息：直接將圖片傳給 Gemini，不使用 RAG
+            print(f"--- (圖像) 收到來自 user_id '{user_id}' 的圖片訊息 ---")
+            user_question = "老師，這張圖片上的物理問題（如下圖）要怎麼思考？"
+            message_content = line_bot_api.get_message_content(event.message.id)
+            image_bytes = io.BytesIO(message_content.content)
+            img = Image.open(image_bytes)
+            prompt_parts = [user_question, img] 
+            print(f"--- (圖像) 正在將圖片傳送給 Gemini... ---")
 
-        # ★★★【視覺恢復點 2】★★★
-        # 將「文字」和「圖片」都放入 prompt_parts！
-        # (Gemini 通常建議圖片在前，或明確指定)
-        prompt_parts = [user_question, img] 
-        print(f"--- (圖像) 正在將圖片傳送給 Gemini... ---")
+        else: # 處理文字訊息：使用 RAG
+            user_question = event.message.text
+            print(f"--- (文字 RAG) 收到來自 user_id '{user_id}' 的文字訊息，開始 RAG 流程... ---")
+            context = find_relevant_chunks(user_question)
+            rag_prompt = f"""
+            ---「相關段落」開始---
+            {context}
+            ---「相關段落」結束---
 
-    else: # ★ 處理文字訊息：使用 RAG ★
-        user_question = event.message.text
-        print(f"--- (文字 RAG) 收到來自 user_id '{user_id}' 的文字訊息，開始 RAG 流程... ---")
+            學生問題：「{user_question}」
 
-        # ★ 執行「第五紀元」向量 RAG！ ★
-        context = find_relevant_chunks(user_question)
+            (請你嚴格遵守 System Prompt 中的指令，100% 基於上述「相關段落」，用「蘇格拉底式提問」來回應學生的問題。)
+            """
+            prompt_parts = [rag_prompt]
 
-        # 構建「RAG 提示詞」
-        rag_prompt = f"""
-        ---「相關段落」開始---
-        {context}
-        ---「相關段落」結束---
+        # 4. 呼叫 Gemini，進行「當前的對話」
+        print(f"--- (Gemini) 正在呼叫 Gemini API... ---")
+        response = chat_session.send_message(prompt_parts)
+        final_text = response.text
+        print(f"--- (Gemini) Gemini API 回應成功 ---")
 
-        學生問題：「{user_question}」
+        # 5. 儲存「更新後的記憶」
+        print(f"--- (記憶) 正在儲存 user_id '{user_id}' 的對話紀錄... ---")
+        save_chat_history(user_id, chat_session)
+        print(f"--- (記憶) 對話紀錄儲存成功 ---")
 
-        (請你嚴格遵守 System Prompt 中的指令，100% 基於上述「相關段落」，用「蘇格拉底式提問」來回應學生的問題。)
-        """
-        prompt_parts = [rag_prompt]
+    except Exception as e:
+        print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG操作失敗。錯誤：{e}")
+        final_text = "抱歉，宗師目前正在檢索記憶/教科書或冥想中，請稍後再試。"
 
-    # 4. 呼叫 Gemini，進行「當前的對話」
-    # (無論是圖片還是 RAG 文字，都用同一個 chat_session)
-    print(f"--- (Gemini) 正在呼叫 Gemini API... ---")
-    response = chat_session.send_message(prompt_parts)
-    final_text = response.text
-    print(f"--- (Gemini) Gemini API 回應成功 ---")
-
-    # 5. 儲存「更新後的記憶」(藍圖三)
-    print(f"--- (記憶) 正在儲存 user_id '{user_id}' 的對話紀錄... ---")
-    save_chat_history(user_id, chat_session)
-    print(f"--- (記憶) 對話紀錄儲存成功 ---")
-
-except Exception as e:
-    print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG操作失敗。錯誤：{e}")
-    final_text = "抱歉，宗師目前正在檢索記憶/教科書或冥想中，請稍後再試。"
-# --- 替換到 except Exception as e: 的下一行 ---
-
-    # 6. 回覆使用者
+    # ★★★【回覆神經修復點】★★★
+    # 確保 reply_message 在 handle_message 函數內部，
+    # 並且在 try...except 區塊之後執行！
     line_bot_api.reply_message(
-        event.reply_token,
+        event.reply_token, # ★ 使用 'event' 在這裡！
         TextSendMessage(text=final_text)
     )
+# --- handle_message 函數結束 ---
 
 # --- 步驟十：啟動「神殿」 ---
 if __name__ == "__main__":
