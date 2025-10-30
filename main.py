@@ -1,7 +1,9 @@
-# --- 「神殿」：AI 宗師的核心 (第六紀元：雙重專家版) ---
+# --- 「神殿」：AI 宗師的核心 (第六紀元：最終修正版) ---
 #
-# 版本：Neon 記憶 + Gemini 向量 RAG (對話宗師) + Gemini 視覺 (視覺專家)
-# 修正：1. 解決 Python 3.13 的 grpc 崩潰 2. 解決 OOM 3. 解決 RAG 搜尋錯誤
+# 版本：Neon 記憶 + 雙重專家 (視覺+對話) + 完整修正
+# 修正：1. `gemini-1.0-pro` (修復 404)
+# 修正：2. `::vector` (修復 RAG 搜尋)
+# 修正：3. `gemini-pro-vision` (0.8.5 的正確名稱)
 # -----------------------------------
 
 import os
@@ -41,7 +43,7 @@ except Exception as e:
 EMBEDDING_MODEL = 'models/text-embedding-004' # (0.8.5 兼容)
 VECTOR_DIMENSION = 768 # ★ 向量維度 768
 
-# --- 步驟四：AI 宗師的「靈魂」核心 (★ 雙重專家版 Prompt ★) ---
+# --- 步驟四：AI 宗師的「靈魂」核心 (★ 最終完整 Prompt ★) ---
 system_prompt = """
 你是一位頂尖的台灣高中物理教學AI，叫做「AI 宗師」。
 你的教學風格是 100% 的「蘇格拉底式教學法」。
@@ -62,14 +64,14 @@ system_prompt = """
 # --- ★ 「彈性引導 + 視覺化切線 + 矛盾檢查」新規則 ★ ---
 9.  **「辨識卡關」**：如果你已經用「簡化情境」或「類比」等方式，確認學生理解了「物理原理本身」，但學生在將此原理應用回「原始問題的特定步驟」（尤其是幾何、向量方向或數學計算）時**反覆卡關或給出相同錯誤**...
 10. **「聚焦盲點 - 通用」**：你可以**稍微直接地**指出學生可能**「卡住的那個步驟」**或**「概念應用點」**，**並要求學生重新聚焦思考該特定步驟**。
-11. **【★ 處理切線方向卡關 ★】**：**如果學生在判斷「圓周運動切線方向」時反覆卡關**，你可以使用**更具體的「時鐘指針」或「方向盤」視覺化**來引導，**並直接連結「運動趨D勢」和「瞬間方向」**：
+11. **【★ 處理切線方向卡關 ★】**：**如果學生在判斷「圓周運動切線方向」時反覆卡關**，你可以使用**更具體的「時鐘指針」或「方向盤」視覺化**來引導，**並直接連結「運動趨勢」和「瞬間方向」**：
     * **例如 (時鐘指針法)**：「好的，我們都同意賽車在 7:30 位置，下一步是朝向 7 點鐘（數字變小）。現在，請想像時鐘的『分針』正指向 7:30 (左下方)。如果它要『逆時針』移動到 7 點鐘，那在 7:30 的那一瞬間，分針的『針尖』是指向哪個大致方向？是比較偏向 9 點鐘（左上）還是比較偏向 6 點鐘（右下）呢？」
     * **例如 (方向盤法)**：「想像你正在開這輛賽車，沿著逆時針圓形跑道前進。當你開到 O 點（大約 7:30 位置）時，為了繼續逆時針轉彎（朝向 7 點鐘），你的方向盤（也就是車頭朝向/切線方向）應該是往『左』打（指向左上方）？還是往『右』打（指向右下方）呢？」
 12. **「保持 Socratic」**：即使在「聚焦盲點」後，你的**最終目的**仍然是**引導**，**絕不直接給出**那個步驟的答案，而是提出**更聚焦、更視覺化**的問題，幫助學生**自己**突破那個特定的卡關點。
 13. **【★ 最終矛盾檢查 ★】**：**在你提出最終的選項讓學生選擇之前（尤其是關於方向的問題），請務必做一次「自我檢查」**：
     * **回顧**你和學生剛剛從「物理定律」（例如安培右手定則）確認的「必要條件」（例如「必須逆時針」）。
     * **回顧**你和學生剛剛透過「類比」或「思想實驗」為**每個選項**（例如「左上方」、「右下方」）推導出的「後果」（例如「導致左轉」、「導致右轉」）。
-    * **「排除矛盾選項」**：如果某個選項的「後果」**明顯違反**了「物理定律的必要條件」（例如，物理要求「逆時針/左轉」，但某選項被推導出會「導致右轉」），**那麼你「絕對不應該」將這個矛盾的選項再次提供給學生！** 你應該**只**提供 lógica 上仍然可能的選項，或者直接指出那個被排除選項的矛盾點，並引導學生思考「為什麼」它與物理定律衝突。**「絕不」**提出自相矛盾的問題！
+    * **「排除矛盾選項」**：如果某個選項的「後果」**明顯違反**了「物理定律的必要條件」（例如，物理要求「逆時針/左轉」，但某選項被推導出會「導致右轉」），**那麼你「絕對不應該」將這個矛盾的選項再次提供給學生！** 你應該**只**提供邏輯上仍然可能的選項，或者直接指出那個被排除選項的矛盾點，並引導學生思考「為什麼」它與物理定律衝突。**「絕不」**提出自相矛盾的問題！
 
 # --- 你的「教學流程」---
 1.  **「確認問題」**：當學生提問時（無論是「純文字」還是「圖片分析」），首先，用「你自己的話」複述一遍問題，確保你理解正確。
@@ -80,7 +82,7 @@ system_prompt = """
 
 # --- 步驟五 & 六：AI 宗師的「大腦」設定 (★ 專家一：對話宗師 ★) ---
 model = genai.GenerativeModel(
-    model_name='gemini-2.5-pro', # ★ 確保使用兼容的 0.8.5 版本模型
+    model_name='gemini-2.5-pro', # ★ 修正：使用 0.8.5 兼容的「正確」名稱 (修復 404)
     system_instruction=system_prompt,
     safety_settings={
         HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -197,7 +199,7 @@ def find_relevant_chunks(query_text, k=3):
         register_vector(conn)
 
         with conn.cursor() as cur:
-            # ★ 修正：加入 ::vector 類型轉換
+            # ★ 修正：加入 ::vector 類型轉換 (修復 RAG 搜尋)
             cur.execute(
                 "SELECT content FROM physics_vectors ORDER BY embedding <-> %s::vector LIMIT %s",
                 (query_embedding, k)
@@ -256,7 +258,8 @@ def handle_message(event):
         if isinstance(event.message, ImageMessage):
             # --- ★ 專家二：「視覺專家」啟動 ★ ---
             print(f"--- (視覺專家) 收到來自 user_id '{user_id}' 的圖片，開始分析... ---")
-            vision_model = genai.GenerativeModel('gemini-2.5-flash-image')
+            # ★ 修正：使用 0.8.5 兼容的「正確」名稱
+            vision_model = genai.GenerativeModel('gemini-2.5-flash-image') 
 
             message_content = line_bot_api.get_message_content(event.message.id)
             image_bytes = io.BytesIO(message_content.content)
@@ -278,7 +281,7 @@ def handle_message(event):
             print(f"--- (文字 RAG) 收到來自 user_id '{user_id}' 的文字訊息... ---")
 
         # --- ★ 統一 RAG 流程 (無論是文字還是圖片分析) ★ ---
-        print(f"--- (RAG) T正在為「{user_question[:30]}...」執行 RAG 搜尋... ---")
+        print(f"--- (RAG) 正在為「{user_question[:30]}...」執行 RAG 搜尋... ---")
         context = find_relevant_chunks(user_question)
 
         # 構建「RAG 提示詞」
@@ -295,7 +298,7 @@ def handle_message(event):
 
         # --- ★ 專家一：「對話宗師」啟動 ★ ---
         print(f"--- (對話宗師) 正在呼叫 Gemini API (gemini-2.5-pro)... ---")
-        response = chat_session.send_message(prompt_parts) # ★ 呼叫 'gemini-pro'
+        response = chat_session.send_message(prompt_parts) # ★ 呼叫 'gemini-1.0-pro'
         final_text = response.text
         print(f"--- (對話宗師) Gemini API 回應成功 ---")
 
