@@ -294,7 +294,7 @@ def handle_message(event):
         prompt_parts = [rag_prompt]
 
         # --- ★ 專家一：「對話宗師」啟動 ★ ---
-        print(f"--- (對話宗師) 正在呼叫 Gemini API (gemini-pro)... ---")
+        print(f"--- (對話宗師) 正在呼叫 Gemini API (gemini-2.5-pro)... ---")
         response = chat_session.send_message(prompt_parts) # ★ 呼叫 'gemini-pro'
         final_text = response.text
         print(f"--- (對話宗師) Gemini API 回應成功 ---")
