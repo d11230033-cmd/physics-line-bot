@@ -80,7 +80,7 @@ system_prompt = """
 
 # --- 步驟五 & 六：AI 宗師的「大腦」設定 (★ 專家一：對話宗師 ★) ---
 model = genai.GenerativeModel(
-    model_name='gemini-pro', # ★ 確保使用兼容的 0.8.5 版本模型
+    model_name='gemini-2.5-pro', # ★ 確保使用兼容的 0.8.5 版本模型
     system_instruction=system_prompt,
     safety_settings={
         HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
