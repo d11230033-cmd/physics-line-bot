@@ -197,7 +197,7 @@ def find_relevant_chunks(query_text, k=3):
 
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT content FROM physics_vectors ORDER BY embedding <-> %s LIMIT %s",
+                "SELECT content FROM physics_vectors ORDER BY embedding <-> %s::vector LIMIT %s", # <--- ★★★ 在這裡加上 ::vector ★★★
                 (query_embedding, k)
             )
             results = cur.fetchall()
