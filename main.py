@@ -1,9 +1,7 @@
-# --- 「神殿」：AI 宗師的核心 (第六紀元：最終修正版) ---
+# --- 「神殿」：AI 宗師的核心 (第八紀元：永恆檔案館版) ---
 #
 # 版本：Neon 記憶 + 雙重專家 (視覺+對話) + 完整修正
-# 修正：1. `gemini-1.0-pro` (修復 404)
-# 修正：2. `::vector` (修復 RAG 搜尋)
-# 修正：3. `gemini-pro-vision` (0.8.5 的正確名稱)
+# 新功能：植入「Cloudinary」，儲存「原始圖片 URL」到「research_log」
 # -----------------------------------
 
 import os
@@ -18,6 +16,12 @@ from PIL import Image
 import io
 import psycopg2 # 藍圖三：資料庫工具
 import json     # 藍圖三：資料庫工具
+import datetime # ★ 第七紀元：需要時間戳
+
+# --- ★ 第八紀元：永恆檔案館工具 ★ ---
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
 
 # --- ★ 第五紀元：向量 RAG 工具 ★ ---
 from pgvector.psycopg2 import register_vector
@@ -27,6 +31,11 @@ LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
 DATABASE_URL = os.environ.get('DATABASE_URL')
+
+# ★ 第八紀元：檔案館金鑰 ★
+CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME')
+CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY')
+CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET')
 
 # --- 步驟二：神殿的基礎建設 ---
 app = Flask(__name__)
@@ -38,6 +47,17 @@ try:
     genai.configure(api_key=GOOGLE_API_KEY)
 except Exception as e:
     print(f"!!! 嚴重錯誤：無法設定 Google API Key。錯誤：{e}")
+
+# --- ★ 第八紀元：連接「永恆檔案館」(Cloudinary) ★ ---
+try:
+    cloudinary.config( 
+        cloud_name = CLOUDINARY_CLOUD_NAME, 
+        api_key = CLOUDINARY_API_KEY, 
+        api_secret = CLOUDINARY_API_SECRET 
+    )
+    print("--- (Cloudinary) 永恆檔案館連接成功！ ---")
+except Exception as e:
+    print(f"!!! 嚴重錯誤：無法連接到 Cloudinary。錯誤：{e}")
 
 # --- ★ 第五紀元：定義「向量轉換」模型 (Gemini) ★ ---
 EMBEDDING_MODEL = 'models/text-embedding-004' # (0.8.5 兼容)
@@ -66,7 +86,7 @@ system_prompt = """
 10. **「聚焦盲點 - 通用」**：你可以**稍微直接地**指出學生可能**「卡住的那個步驟」**或**「概念應用點」**，**並要求學生重新聚焦思考該特定步驟**。
 11. **【★ 處理切線方向卡關 ★】**：**如果學生在判斷「圓周運動切線方向」時反覆卡關**，你可以使用**更具體的「時鐘指針」或「方向盤」視覺化**來引導，**並直接連結「運動趨勢」和「瞬間方向」**：
     * **例如 (時鐘指針法)**：「好的，我們都同意賽車在 7:30 位置，下一步是朝向 7 點鐘（數字變小）。現在，請想像時鐘的『分針』正指向 7:30 (左下方)。如果它要『逆時針』移動到 7 點鐘，那在 7:30 的那一瞬間，分針的『針尖』是指向哪個大致方向？是比較偏向 9 點鐘（左上）還是比較偏向 6 點鐘（右下）呢？」
-    * **例如 (方向盤法)**：「想像你正在開這輛賽車，沿著逆時針圓形跑道前進。當你開到 O 點（大約 7:30 位置）時，為了繼續逆時針轉彎（朝向 7 點鐘），你的方向盤（也就是車頭朝向/切線方向）應該是往『左』打（指向左上方）？還是往『右』打（指向右下方）呢？」
+    * **例如 (方向盤法)**：「想像你 đang 在開這輛賽車，沿著逆時針圓形跑道前進。當你開到 O 點（大約 7:30 位置）時，為了繼續逆時針轉彎（朝向 7 點鐘），你的方向盤（也就是車頭朝向/切線方向）應該是往『左』打（指向左上方）？還是往『右』打（指向右下方）呢？」
 12. **「保持 Socratic」**：即使在「聚焦盲點」後，你的**最終目的**仍然是**引導**，**絕不直接給出**那個步驟的答案，而是提出**更聚焦、更視覺化**的問題，幫助學生**自己**突破那個特定的卡關點。
 13. **【★ 最終矛盾檢查 ★】**：**在你提出最終的選項讓學生選擇之前（尤其是關於方向的問題），請務必做一次「自我檢查」**：
     * **回顧**你和學生剛剛從「物理定律」（例如安培右手定則）確認的「必要條件」（例如「必須逆時針」）。
@@ -102,6 +122,7 @@ def get_db_connection():
         print(f"!!! 嚴重錯誤：無法連接到資料庫。錯誤：{e}")
         return None
 
+# 函數：初始化資料庫（★ 升級：同時建立 research_log ★）
 def initialize_database():
     conn = get_db_connection()
     if conn:
@@ -110,6 +131,7 @@ def initialize_database():
             print("--- (SQL) `register_vector` 成功 ---")
 
             with conn.cursor() as cur:
+                # 表格一：AI 的「記憶」
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS chat_history (
                         user_id TEXT PRIMARY KEY,
@@ -118,6 +140,7 @@ def initialize_database():
                 """)
                 print("--- (SQL) 表格 'chat_history' 確認/建立成功 ---")
 
+                # 表格二：AI 的「知識庫」
                 cur.execute(f"""
                     CREATE TABLE IF NOT EXISTS physics_vectors (
                         id SERIAL PRIMARY KEY,
@@ -127,12 +150,42 @@ def initialize_database():
                 """)
                 print(f"--- (SQL) 表格 'physics_vectors' (維度 {VECTOR_DIMENSION}) 確認/建立成功 ---")
 
+                # ★★★【第八紀元：升級表格】★★★
+                # 表格三：人類的「研究日誌」(加入 image_url)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS research_log (
+                        id SERIAL PRIMARY KEY,
+                        timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                        user_id TEXT,
+                        user_message_type TEXT,
+                        user_content TEXT,
+                        image_url TEXT,
+                        vision_analysis TEXT,
+                        rag_context TEXT,
+                        ai_response TEXT
+                    );
+                """)
+                # 檢查 image_url 欄位是否存在，如果不存在就加入
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name='research_log' AND column_name='image_url'
+                        ) THEN
+                            ALTER TABLE research_log ADD COLUMN image_url TEXT;
+                        END IF;
+                    END$$;
+                """)
+                print("--- (SQL) ★ 第八紀元：表格 'research_log' (含 image_url) 確認/建立/升級成功 ★ ---")
+
                 conn.commit()
         except Exception as e:
             print(f"!!! 錯誤：無法初始化資料庫表格。錯誤：{e}")
         finally:
             conn.close()
 
+# 函數：讀取聊天紀錄 (AI 記憶)
 def get_chat_history(user_id):
     conn = get_db_connection()
     history_json = [] 
@@ -149,6 +202,7 @@ def get_chat_history(user_id):
             conn.close()
     return history_json 
 
+# 函數：儲存聊天紀錄 (AI 記憶)
 def save_chat_history(user_id, chat_session):
     conn = get_db_connection()
     if conn:
@@ -178,6 +232,27 @@ def save_chat_history(user_id, chat_session):
         finally:
             conn.close()
 
+# ★★★【第八紀元：升級函數】★★★
+# 函數：儲存「研究日誌」(加入 image_url)
+def save_to_research_log(user_id, user_msg_type, user_content, image_url, vision_analysis, rag_context, ai_response):
+    conn = get_db_connection()
+    if conn:
+        try:
+            print(f"--- (研究日誌) 正在儲存 user_id '{user_id}' 的完整互動... ---")
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO research_log 
+                    (user_id, user_message_type, user_content, image_url, vision_analysis, rag_context, ai_response)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (user_id, user_msg_type, user_content, image_url, vision_analysis, rag_context, ai_response))
+                conn.commit()
+            print("--- (研究日誌) 儲存成功 ---")
+        except Exception as e:
+            print(f"!!! 錯誤：無法儲存「研究日誌」。錯誤：{e}")
+        finally:
+            conn.close()
+
+# 函數：RAG 搜尋 (AI 知識庫)
 def find_relevant_chunks(query_text, k=3):
     """搜尋最相關的 k 個教科書段落 (使用 Gemini Embedding)"""
 
@@ -234,11 +309,19 @@ def callback():
         abort(400)
     return 'OK'
 
-# --- 步驟九：神殿的「主控室」(處理訊息) (★ 最終雙重專家版 ★) ---
+# --- 步驟九：神殿的「主控室」(處理訊息) (★ 最終研究日誌版 ★) ---
 @handler.add(MessageEvent, message=(TextMessage, ImageMessage))
 def handle_message(event):
 
     user_id = event.source.user_id
+
+    # --- ★ 第八紀元：初始化研究日誌變數 ★ ---
+    user_message_type = "unknown"
+    user_content = ""
+    image_url_to_save = "" # ★ 新增：儲存圖片 URL
+    vision_analysis = ""
+    rag_context = ""
+    final_text = "" # AI 的最終回覆
 
     # 1. 讀取「過去的記憶」
     past_history = get_chat_history(user_id)
@@ -256,38 +339,54 @@ def handle_message(event):
 
     try:
         if isinstance(event.message, ImageMessage):
-            # --- ★ 專家二：「視覺專家」啟動 ★ ---
-            print(f"--- (視覺專家) 收到來自 user_id '{user_id}' 的圖片，開始分析... ---")
-            # ★ 修正：使用 0.8.5 兼容的「正確」名稱
-            vision_model = genai.GenerativeModel('gemini-2.5-flash-image') 
+            # --- ★ 第八紀元：上傳圖片到「永恆檔案館」 ★ ---
+            user_message_type = "image"
+            user_content = f"Image received (Message ID: {event.message.id})" # 記錄圖片 ID
 
+            print(f"--- (Cloudinary) 收到來自 user_id '{user_id}' 的圖片，開始上傳... ---")
             message_content = line_bot_api.get_message_content(event.message.id)
-            image_bytes = io.BytesIO(message_content.content)
-            img = Image.open(image_bytes)
+            image_bytes = message_content.content # ★ 直接使用原始 bytes
+
+            try:
+                upload_result = cloudinary.uploader.upload(image_bytes)
+                image_url_to_save = upload_result.get('secure_url')
+                if image_url_to_save:
+                    print(f"--- (Cloudinary) 圖片上傳成功！URL: {image_url_to_save} ---")
+                else:
+                    print(f"!!! 錯誤：Cloudinary 未返回 URL。")
+                    image_url_to_save = "upload_failed"
+            except Exception as upload_e:
+                print(f"!!! 嚴重錯誤：Cloudinary 圖片上傳失敗。錯誤：{upload_e}")
+                image_url_to_save = f"upload_error: {upload_e}"
+
+            # --- ★ 專家二：「視覺專家」啟動 ★ ---
+            print(f"--- (視覺專家) 正在分析圖片... ---")
+            vision_model = genai.GenerativeModel('gemini-2.5-flash-image') 
+            img = Image.open(io.BytesIO(image_bytes)) # 重新打開 bytes 以供 vision
 
             vision_prompt = "請你扮演一個物理老師，詳細、準確地描述這張圖片中的物理問題情境和所有文字。"
 
-            # ★ 呼叫「視覺專家」(使用 0.8.5 的 generate_content 語法)
             vision_response = vision_model.generate_content([vision_prompt, img])
-            vision_text = vision_response.text
-            print(f"--- (視覺專家) 分析完畢：{vision_text[:70]}... ---")
+            vision_analysis = vision_response.text # ★ 記錄「視覺分析」
+            print(f"--- (視覺專家) 分析完畢：{vision_analysis[:70]}... ---")
 
-            # ★ 將「視覺分析」轉換為「文字問題」
-            user_question = f"圖片內容分析：『{vision_text}』。請基於這個分析，開始用蘇格拉底式教學法引導我。"
+            user_question = f"圖片內容分析：『{vision_analysis}』。請基於這個分析，開始用蘇格拉底式教學法引導我。"
 
         else: 
             # --- ★ 傳統文字訊息 ★ ---
+            user_message_type = "text"
             user_question = event.message.text
+            user_content = user_question # ★ 記錄「學生文字」
             print(f"--- (文字 RAG) 收到來自 user_id '{user_id}' 的文字訊息... ---")
 
         # --- ★ 統一 RAG 流程 (無論是文字還是圖片分析) ★ ---
         print(f"--- (RAG) 正在為「{user_question[:30]}...」執行 RAG 搜尋... ---")
-        context = find_relevant_chunks(user_question)
+        rag_context = find_relevant_chunks(user_question) # ★ 記錄「RAG 內容」
 
         # 構建「RAG 提示詞」
         rag_prompt = f"""
         ---「相關段落」開始---
-        {context}
+        {rag_context}
         ---「相關段落」結束---
 
         學生問題/圖片分析：「{user_question}」
@@ -299,10 +398,10 @@ def handle_message(event):
         # --- ★ 專家一：「對話宗師」啟動 ★ ---
         print(f"--- (對話宗師) 正在呼叫 Gemini API (gemini-2.5-pro)... ---")
         response = chat_session.send_message(prompt_parts) # ★ 呼叫 'gemini-1.0-pro'
-        final_text = response.text
+        final_text = response.text # ★ 記錄「AI 回覆」
         print(f"--- (對話宗師) Gemini API 回應成功 ---")
 
-        # 5. 儲存「更新後的記憶」
+        # 5. 儲存「更新後的記憶」(AI 記憶)
         print(f"--- (記憶) 正在儲存 user_id '{user_id}' 的對話紀錄... ---")
         save_chat_history(user_id, chat_session)
         print(f"--- (記憶) 對話紀錄儲存成功 ---")
@@ -310,8 +409,24 @@ def handle_message(event):
     except Exception as e:
         print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG/視覺操作失敗。錯誤：{e}")
         final_text = "抱歉，宗師目前正在檢索記憶/教科書或冥想中，請稍後再試。"
+        # ★ 確保錯誤日誌也能被儲存
+        if not user_content: user_content = "Error during processing"
+        if not user_message_type: user_message_type = "error"
 
-    # 6. 回覆使用者
+    # ★★★【第八紀元：最終儲存】★★★
+    # 6. 儲存「研究日誌」(人類研究)
+    # (無論成功或失敗，都儲存日誌)
+    save_to_research_log(
+        user_id=user_id,
+        user_msg_type=user_message_type,
+        user_content=user_content,
+        image_url=image_url_to_save, # ★ 傳入「圖片 URL」
+        vision_analysis=vision_analysis,
+        rag_context=rag_context,
+        ai_response=final_text
+    )
+
+    # 7. 回覆使用者
     line_bot_api.reply_message(
         event.reply_token, 
         TextSendMessage(text=final_text)
