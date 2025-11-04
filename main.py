@@ -521,4 +521,5 @@ def handle_message(event):
 
 # --- 步驟十：啟動「神殿」 ---
 if __name__ == "__main__":
-    port = int(os.environ.get('PORT', 808
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
