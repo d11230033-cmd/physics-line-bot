@@ -18,7 +18,6 @@ from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMess
 # --- ★ 第十四紀元：全新 SDK ★ ---
 from google import genai
 from google.genai import types
-from google.genai.types import content_types
 from google.genai.types import HarmCategory, HarmBlockThreshold
 
 from PIL import Image
