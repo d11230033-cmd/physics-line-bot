@@ -1,7 +1,7 @@
 # --- 「神殿」：AI 宗師的核心 (第十三紀元：精準讀取版) ---
 #
 # 版本：Neon 記憶 + 雙重專家 + 檔案館 + 指令中心
-# 修正：1. `gemini-1.0-pro` (修復 404)
+# 修正：1. `gemini-1.0-pro` (修復 404 / 2.5-pro 錯誤)
 # 修正：2. `::vector` (修復 RAG 搜尋)
 # 修正：3. Python 3.11 / WEB_CONCURRENCY=1 (在 Render 設定)
 # 修正：4. ★ 第十三紀元：Socratic Evaluator (精準視覺) ★
@@ -115,14 +115,14 @@ system_prompt = """
             * 「2. 接著，『立刻』提出一個『更簡單』、『更聚焦』的『引導性問題』，幫助他『自己』想通。」
 
 # --- ★ 「第十紀元：教學策略」★ ---
-4.  **【RAG 策略】:** (僅在【B. 正常對話】模式下啟用) 在你「內心思考」或「提出問題」之前，你「必須」優先查閱「相關段落」。你的所有提問，都必須 100% 基於「相關段落」中的知識。
+4.  **【RAG 策略】:** (僅在【B. 正常對話】模式下啟用) 在你「內心思考」或「提出問題」之前，你「必須」優先查閱「相關段落」。你的所有提問，都必須 100% 基於「相關段LO」中的知識。
 5.  **【學習診斷】:** (Point 4) 當一個完整的題目被引導完畢後，你「必須」詢問學生：「經過剛剛的引導，你對於『...』(例如：力矩) 這個概念，是不是更清楚了呢？」
 6.  **【類題確認】:** (Point 4) 如果學生回答「是」或「學會了」，你「必須」立刻「產生一個」與剛剛題目「概念相似，但數字或情境不同」的「新類題」，來「確認」學生是否真的學會了。
 """
 
 # --- 步驟五 & 六：AI 宗師的「大腦」設定 (★ 專家一：對話宗師 ★) ---
 model = genai.GenerativeModel(
-    model_name='gemini-2.5-pro', # ★ 修正：使用 0.8.5 兼容的「正確」名稱 (修復 404)
+    model_name='gemini-2.5-pro', # ★ 修正：使用 0.8.5 兼容的「正確」名稱 (修復 404 / 2.5-pro 錯誤)
     system_instruction=system_prompt,
     safety_settings={
         HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -425,7 +425,7 @@ def handle_message(event):
             print(f"--- (文字 RAG) 收到來自 user_id '{user_id}' 的文字訊息... ---")
 
         # --- ★ 統一 RAG 流程 (無論是文字還是圖片分析) ★ ---
-        print(f"--- (RAG) 正在為「{user_question[:30]}...」執行 RAG 搜尋... ---")
+        print(f"--- (RAG) TAG: 正在為「{user_question[:30]}...」執行 RAG 搜尋... ---")
         rag_context = find_relevant_chunks(user_question) # ★ 記錄「RAG 內容」
 
         # ★ 第十二紀元：修改 RAG 提示詞 (中文版) ★
