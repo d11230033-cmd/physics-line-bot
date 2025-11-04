@@ -371,6 +371,7 @@ def handle_message(event):
             img = Image.open(io.BytesIO(image_bytes)) # 重新打開 bytes 以供 vision
 
            vision_prompt = """
+            
             你是一位頂尖的物理老師。這張圖片「有兩種可能」：
             1.「新問題」：它可能是一張包含「新問題」的講義或截圖。
             2.「學生作答」：它可能是一張學生「手寫的解題過程」。
@@ -381,6 +382,7 @@ def handle_message(event):
             * **如果是「學生作答」**：請「詳細分析」學生的解題步驟。**找出「第一個」 conceptual (概念) 或 calculation (計算) 上的「錯誤」**。然後「明確指出」這個錯誤，並「提示」學生正確的思考方向或應該使用的「正確概念」。
 
             請直接開始你的分析。
+            
             """
 
             vision_response = vision_model.generate_content([vision_prompt, img])
