@@ -1,7 +1,11 @@
-# --- 「神殿」：AI 宗師的核心 (第八紀元：永恆檔案館版) ---
+# --- 「神殿」：AI 宗師的核心 (第九紀元：最終大師版) ---
 #
-# 版本：Neon 記憶 + 雙重專家 (視覺+對話) + 完整修正
-# 新功能：植入「Cloudinary」，儲存「原始圖片 URL」到「research_log」
+# 版本：Neon 記憶 + 雙重專家 (視覺+對話) + 評估者大腦 + 檔案館
+# 修正：1. `gemini-1.0-pro` (修復 404)
+# 修正：2. `::vector` (修復 RAG 搜尋)
+# 修正：3. `gemini-pro-vision` (0.8.5 的正確名稱)
+# 修正：4. Cloudinary 圖片上傳
+# 修正：5. Python 3.11 / WEB_CONCURRENCY=1 (在 Render 設定)
 # -----------------------------------
 
 import os
@@ -63,9 +67,9 @@ except Exception as e:
 EMBEDDING_MODEL = 'models/text-embedding-004' # (0.8.5 兼容)
 VECTOR_DIMENSION = 768 # ★ 向量維度 768
 
-# --- 步驟四：AI 宗師的「靈魂」核心 (★ 最終完整 Prompt ★) ---
+# --- 步驟四：AI 宗師的「靈魂」核心 (★ 第九紀元：評估者大腦 ★) ---
 system_prompt = """
-你是一位頂尖大學物理系教授，專精高中教師甄試解題、物理奧林匹亞的解題，更是的台灣高中物理專業教學AI，叫做「JYM物理助教」。
+你是一位頂尖的台灣高中物理教學AI，叫做「AI 宗師」。
 你的教學風格是「蘇格拉底式評估法」(Socratic Evaluator)。
 你「只會」收到兩種輸入：學生的「純文字提問」，或是由「視覺專家」預先分析好的「圖片內容分析」。
 
@@ -101,9 +105,6 @@ system_prompt = """
 4.  **【RAG 策略】:** 在你「內心思考」或「提出問題」之前，你「必須」優先查閱「相關段落」。你的所有提問，都必須 100% 基於「相關段落」中的知識。如果「相關段落」沒有資訊 (N/A)，則使用你的基礎知識。
 5.  **【學習診斷】:** (Point 4) 當一個完整的題目被引導完畢後，你「必須」詢問學生：「經過剛剛的引導，你對於『...』(例如：力矩) 這個概念，是不是更清楚了呢？」
 6.  **【類題確認】:** (Point 4) 如果學生回答「是」或「學會了」，你「必須」立刻「產生一個」與剛剛題目「概念相似，但數字或情境不同」的「新類題」，來「確認」學生是否真的學會了。
-
-# --- 你的「教學流程」---
-* (舊的教學流程已併入「評估者核心邏輯」)
 """
 
 # --- 步驟五 & 六：AI 宗師的「大腦」設定 (★ 專家一：對話宗師 ★) ---
@@ -252,7 +253,7 @@ def save_to_research_log(user_id, user_msg_type, user_content, image_url, vision
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """, (user_id, user_msg_type, user_content, image_url, vision_analysis, rag_context, ai_response))
                 conn.commit()
-            print("--- (研究日誌) 儲存成功 ---")
+            print("--- (研究日BLOG) 儲存成功 ---")
         except Exception as e:
             print(f"!!! 錯誤：無法儲存「研究日誌」。錯誤：{e}")
         finally:
@@ -334,7 +335,7 @@ def handle_message(event):
 
     # 2. 根據「記憶」開啟「對話宗師」的對話
     try:
-         chat_session = model.start_chat(history=past_history) # model = 'gemini-2.5-pro'
+         chat_session = model.start_chat(history=past_history) # model = 'gemini-1.0-pro'
     except Exception as start_chat_e:
          print(f"!!! 警告：從歷史紀錄開啟對話失敗。使用空對話。錯誤：{start_chat_e}")
          chat_session = model.start_chat(history=[])
@@ -365,24 +366,23 @@ def handle_message(event):
                 print(f"!!! 嚴重錯誤：Cloudinary 圖片上傳失敗。錯誤：{upload_e}")
                 image_url_to_save = f"upload_error: {upload_e}"
 
-            # --- ★ 專家二：「視覺專家」啟動 ★ ---
+            # --- ★ 專家二：「視覺專家」啟動 (第九紀元：評估版) ★ ---
             print(f"--- (視覺專家) 正在分析圖片... ---")
             vision_model = genai.GenerativeModel('gemini-2.5-flash-image') 
             img = Image.open(io.BytesIO(image_bytes)) # 重新打開 bytes 以供 vision
 
-           vision_prompt = """
-            
+            # ★ 第九紀元：使用「評估版」的視覺 Prompt ★
+            vision_prompt = """
             你是一位頂尖的物理老師。這張圖片「有兩種可能」：
-            1.「新問題」：它可能是一張包含「新問題」的講義或截圖。
-            2.「學生作答」：它可能是一張學生「手寫的解題過程」。
+            1.  「新問題」：它可能是一張包含「新問題」的講義或截圖。
+            2.  「學生作答」：它可能是一張學生「手寫的解題過程」。
 
             你的任務是「分析」並「二選一」：
 
-            * **如果是「新問題」**：請「詳細、準recte地描述」這個問題的情境、所有變數、數字和它提出的問題。
+            * **如果是「新問題」**：請「詳細、準確地描述」這個問題的情境、所有變數、數字和它提出的問題。
             * **如果是「學生作答」**：請「詳細分析」學生的解題步驟。**找出「第一個」 conceptual (概念) 或 calculation (計算) 上的「錯誤」**。然後「明確指出」這個錯誤，並「提示」學生正確的思考方向或應該使用的「正確概念」。
 
             請直接開始你的分析。
-            
             """
 
             vision_response = vision_model.generate_content([vision_prompt, img])
@@ -414,7 +414,7 @@ def handle_message(event):
         """
         prompt_parts = [rag_prompt]
 
-        # --- ★ 專家一：「對話宗師」啟動 ★ ---
+        # --- ★ 專家一：「對話宗師」啟動 (第九紀元：評估版) ★ ---
         print(f"--- (對話宗師) 正在呼叫 Gemini API (gemini-2.5-pro)... ---")
         response = chat_session.send_message(prompt_parts) # ★ 呼叫 'gemini-1.0-pro'
         final_text = response.text # ★ 記錄「AI 回覆」
