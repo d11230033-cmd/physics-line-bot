@@ -1,10 +1,11 @@
-# --- 「神殿」：AI 宗師的核心 (第十三紀元：精準讀取版) ---
+# --- 「神殿」：AI 宗師的核心 (第十五紀元：雙重專家版) ---
 #
-# 版本：Neon 記憶 + 雙重專家 + 檔案館 + 指令中心
-# 修正：1. `gemini-1.0-pro` (修復 404 / 2.5-pro 錯誤)
-# 修正：2. `::vector` (修復 RAG 搜尋)
-# 修正：3. Python 3.11 / WEB_CONCURRENCY=1 (在 Render 設定)
-# 修正：4. ★ 第十三紀元：Socratic Evaluator (精準視覺) ★
+# 版本：Neon 記憶 + 雙重專家 (視覺+對話) + 檔案館 + 指令中心
+# SDK：★「全新」 google-genai (PS5 SDK) ★
+# 模型：★「專家一」 gemini-2.5-pro (對話) ★
+# 模型：★「專家二」 gemini-2.5-flash-image (視覺) ★
+# 修正：1. Python 3.11 / WEB_CONCURRENCY=1 (在 Render 設定)
+# 修正：2. ★ 第十三紀元：Socratic Evaluator (精準視覺) ★
 # -----------------------------------
 
 import os
@@ -13,8 +14,13 @@ from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMessage
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold, content_types
+
+# --- ★ 第十四紀元：全新 SDK ★ ---
+from google import genai
+from google.genai import types
+from google.genai.types import content_types
+from google.genai.types import HarmCategory, HarmBlockThreshold
+
 from PIL import Image
 import io
 import psycopg2 # 藍圖三：資料庫工具
@@ -32,7 +38,7 @@ from pgvector.psycopg2 import register_vector
 # --- 步驟一：神殿的鑰匙 (從 Render.com 讀取) ---
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
-GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
+# ★ 第十四紀元：金鑰名稱已在 Render 改為 GEMINI_API_KEY ★
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
 # ★ 第八紀元：檔案館金鑰 ★
@@ -45,11 +51,14 @@ app = Flask(__name__)
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# --- 步驟三：連接「神之鍛造廠」(Gemini) ---
+# --- ★ 第十四紀元：連接「神之鍛造廠」(Gemini PS5) ★ ---
+# (金鑰「GEMINI_API_KEY」將自動從 Render 環境變數讀取)
 try:
-    genai.configure(api_key=GOOGLE_API_KEY)
+    client = genai.Client()
+    print("--- (Gemini) ★ 第十四紀元：PS5 SDK (google-genai) 連接成功！ ★ ---")
 except Exception as e:
-    print(f"!!! 嚴重錯誤：無法設定 Google API Key。錯誤：{e}")
+    print(f"!!! 嚴重錯誤：無法設定 Google API Key (GEMINI_API_KEY)。錯誤：{e}")
+    client = None
 
 # --- ★ 第八紀元：連接「永恆檔案館」(Cloudinary) ★ ---
 try:
@@ -62,11 +71,13 @@ try:
 except Exception as e:
     print(f"!!! 嚴重錯誤：無法連接到 Cloudinary。錯誤：{e}")
 
-# --- ★ 第五紀元：定義「向量轉換」模型 (Gemini) ★ ---
-EMBEDDING_MODEL = 'models/text-embedding-004' # (0.8.5 兼容)
+# --- ★ 第十五紀元：定義「雙重專家」模型 ★ ---
+CHAT_MODEL = 'gemini-2.5-pro'           # ★ 專家一：複雜推理
+VISION_MODEL = 'gemini-2.5-flash-image'  # ★ 專家二：影像分析
+EMBEDDING_MODEL = 'models/text-embedding-004' # (保持不變，這是標準)
 VECTOR_DIMENSION = 768 # ★ 向量維度 768
 
-# --- 步驟四：AI 宗師的「靈魂」核心 (★ 第十二紀元：中文指令 ★) ---
+# --- 步驟四：AI 宗師的「靈魂」核心 (★ 第十三紀元：精準視覺 ★) ---
 system_prompt = """
 你是一位頂尖的台灣高中物理教學AI，叫做「AI 宗師」。
 你的教學風格是「蘇格拉底式評估法」(Socratic Evaluator)。
@@ -115,24 +126,36 @@ system_prompt = """
             * 「2. 接著，『立刻』提出一個『更簡單』、『更聚焦』的『引導性問題』，幫助他『自己』想通。」
 
 # --- ★ 「第十紀元：教學策略」★ ---
-4.  **【RAG 策略】:** (僅在【B. 正常對話】模式下啟用) 在你「內心思考」或「提出問題」之前，你「必須」優先查閱「相關段落」。你的所有提問，都必須 100% 基於「相關段LO」中的知識。
+4.  **【RAG 策略】:** (僅在【B. 正常對話】模式下啟用) 在你「內心思考」或「提出問題」之前，你「必須」優先查閱「相關段落」。你的所有提問，都必須 100% 基於「相關段落」中的知識。
 5.  **【學習診斷】:** (Point 4) 當一個完整的題目被引導完畢後，你「必須」詢問學生：「經過剛剛的引導，你對於『...』(例如：力矩) 這個概念，是不是更清楚了呢？」
 6.  **【類題確認】:** (Point 4) 如果學生回答「是」或「學會了」，你「必須」立刻「產生一個」與剛剛題目「概念相似，但數字或情境不同」的「新類題」，來「確認」學生是否真的學會了。
 """
 
-# --- 步驟五 & 六：AI 宗師的「大腦」設定 (★ 專家一：對話宗師 ★) ---
-model = genai.GenerativeModel(
-    model_name='gemini-2.5-pro', # ★ 修正：使用 0.8.5 兼容的「正確」名稱 (修復 404 / 2.5-pro 錯誤)
+# --- ★ 第十四紀元：定義「PS5」的「設定」 ★ ---
+# (這是「對話宗師」 (gemini-2.5-pro) 的專用設定)
+generation_config = types.GenerateContentConfig(
     system_instruction=system_prompt,
-    safety_settings={
-        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-    }
+    safety_settings=[
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+        ),
+    ]
 )
 
-# --- 步驟七：連接「外部大腦」(Neon 資料庫) (★ 完整修正版 ★) ---
+# --- 步驟七：連接「外部大腦」(Neon 資料庫) (★ 無需變更 ★) ---
 
 def get_db_connection():
     try:
@@ -142,7 +165,7 @@ def get_db_connection():
         print(f"!!! 嚴重錯誤：無法連接到資料庫。錯誤：{e}")
         return None
 
-# 函數：初始化資料庫（★ 升級：同時建立 research_log ★）
+# 函數：初始化資料庫（★ 無需變更 ★）
 def initialize_database():
     conn = get_db_connection()
     if conn:
@@ -170,8 +193,7 @@ def initialize_database():
                 """)
                 print(f"--- (SQL) 表格 'physics_vectors' (維度 {VECTOR_DIMENSION}) 確認/建立成功 ---")
 
-                # ★★★【第八紀元：升級表格】★★★
-                # 表格三：人類的「研究日誌」(加入 image_url)
+                # 表格三：人類的「研究日誌」
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS research_log (
                         id SERIAL PRIMARY KEY,
@@ -185,7 +207,6 @@ def initialize_database():
                         ai_response TEXT
                     );
                 """)
-                # 檢查 image_url 欄位是否存在，如果不存在就加入
                 cur.execute("""
                     DO $$
                     BEGIN
@@ -205,40 +226,44 @@ def initialize_database():
         finally:
             conn.close()
 
-# 函數：讀取聊天紀錄 (AI 記憶)
+# --- ★ 第十四紀元：重寫「讀取記憶」 (PS5 語法) ★ ---
 def get_chat_history(user_id):
     conn = get_db_connection()
-    history_json = [] 
+    history_list = [] # ★「PS5」需要「Content 物件」列表
     if conn:
         try:
             with conn.cursor() as cur:
                 cur.execute("SELECT history FROM chat_history WHERE user_id = %s;", (user_id,))
                 result = cur.fetchone()
                 if result and result[0]:
-                    history_json = result[0] 
+                    history_json = result[0]
+                    # ★ 重建「PS5」的 Content 列表
+                    for item in history_json:
+                        role = item.get('role', 'user')
+                        parts_text = item.get('parts', [])
+                        # (PS5 SDK v0.2.0 (alpha) 的 chat.create 似乎只接受 user/model 角色)
+                        if role == 'user' or role == 'model':
+                            history_list.append(types.Content(role=role, parts=[types.Part.from_text(text) for text in parts_text]))
         except Exception as e:
             print(f"!!! 錯誤：無法讀取 user_id '{user_id}' 的歷史紀錄。錯誤：{e}")
         finally:
             conn.close()
-    return history_json 
+    return history_list 
 
-# 函數：儲存聊天紀錄 (AI 記憶)
+# --- ★ 第十四紀元：重寫「儲存記憶」 (PS5 語法) ★ ---
 def save_chat_history(user_id, chat_session):
     conn = get_db_connection()
     if conn:
         try:
             history_to_save = []
-            if chat_session.history: 
-                for content in chat_session.history:
-                    parts_text = []
-                    if content.parts:
-                        try:
-                            parts_text = [part.text for part in content.parts if hasattr(part, 'text')]
-                        except Exception as part_e:
-                            print(f"!!! 警告：提取 history parts 時出錯: {part_e}。內容: {content}")
-
-                    role = content.role if hasattr(content, 'role') else 'unknown' 
-                    history_to_save.append({'role': role, 'parts': parts_text})
+            # ★「PS5」的語法是 .get_history()
+            history = chat_session.get_history() 
+            if history:
+                for message in history:
+                    # (我們只儲存 user 和 model 的對話)
+                    if message.role == 'user' or message.role == 'model':
+                        parts_text = [part.text for part in message.parts if hasattr(part, 'text')]
+                        history_to_save.append({'role': message.role, 'parts': parts_text})
 
             with conn.cursor() as cur:
                 cur.execute("""
@@ -252,39 +277,22 @@ def save_chat_history(user_id, chat_session):
         finally:
             conn.close()
 
-# ★★★【第八紀元：升級函數】★★★
-# 函數：儲存「研究日誌」(加入 image_url)
-def save_to_research_log(user_id, user_msg_type, user_content, image_url, vision_analysis, rag_context, ai_response):
-    conn = get_db_connection()
-    if conn:
-        try:
-            print(f"--- (研究日誌) 正在儲存 user_id '{user_id}' 的完整互動... ---")
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO research_log 
-                    (user_id, user_message_type, user_content, image_url, vision_analysis, rag_context, ai_response)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """, (user_id, user_msg_type, user_content, image_url, vision_analysis, rag_context, ai_response))
-                conn.commit()
-            print("--- (研究日誌) 儲存成功 ---")
-        except Exception as e:
-            print(f"!!! 錯誤：無法儲存「研究日誌」。錯誤：{e}")
-        finally:
-            conn.close()
-
-# 函數：RAG 搜尋 (AI 知識庫)
+# --- ★ 第十四紀元：重寫「RAG 搜尋」 (PS5 語法) ★ ---
 def find_relevant_chunks(query_text, k=3):
     """搜尋最相關的 k 個教科書段落 (使用 Gemini Embedding)"""
 
     conn = None
+    if not client: return "N/A" # 檢查 client 是否成功初始化
+
     try:
         print(f"--- (RAG) 正在為問題「{query_text[:20]}...」向 Gemini 請求向量... ---")
-        result = genai.embed_content(
+        # ★「PS5」的語法是 client.models.embed_content
+        result = client.models.embed_content(
             model=EMBEDDING_MODEL,
-            content=[query_text], 
-            task_type="retrieval_query" 
+            contents=[query_text], 
+            task_type="RETRIEVAL_QUERY" # ★「PS5」的 Task Type 是大寫
         )
-        query_embedding = result['embedding'][0] 
+        query_embedding = result.embedding # ★「PS5」的結果在 .embedding
 
         print("--- (RAG) 正在連接資料庫以搜尋向量... ---")
         conn = get_db_connection()
@@ -316,9 +324,28 @@ def find_relevant_chunks(query_text, k=3):
         if conn:
             conn.close()
 
+# 函數：儲存「研究日誌」(★ 無需變更 ★)
+def save_to_research_log(user_id, user_msg_type, user_content, image_url, vision_analysis, rag_context, ai_response):
+    conn = get_db_connection()
+    if conn:
+        try:
+            print(f"--- (研究日誌) 正在儲存 user_id '{user_id}' 的完整互動... ---")
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO research_log 
+                    (user_id, user_message_type, user_content, image_url, vision_analysis, rag_context, ai_response)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (user_id, user_msg_type, user_content, image_url, vision_analysis, rag_context, ai_response))
+                conn.commit()
+            print("--- (研究日誌) 儲存成功 ---")
+        except Exception as e:
+            print(f"!!! 錯誤：無法儲存「研究日誌」。錯誤：{e}")
+        finally:
+            conn.close()
+
 initialize_database()
 
-# --- 步驟八：神殿的「入口」(Webhook) ---
+# --- 步驟八：神殿的「入口」(Webhook) (★ 無需變更 ★) ---
 @app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
@@ -329,43 +356,54 @@ def callback():
         abort(400)
     return 'OK'
 
-# --- 步驟九：神殿的「主控室」(處理訊息) (★ 最終研究日誌版 ★) ---
+# --- 步驟九：神殿的「主控室」(處理訊息) (★ 第十五紀元：雙重專家 ★) ---
 @handler.add(MessageEvent, message=(TextMessage, ImageMessage))
 def handle_message(event):
 
     user_id = event.source.user_id
 
+    if not client:
+        print("!!! 嚴重錯誤：Gemini Client 未初始化！(金鑰可能錯誤)")
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="抱歉，宗師目前金鑰遺失，請檢查 Render 環境變數 `GEMINI_API_KEY`。"))
+        return
+
     # --- ★ 第八紀元：初始化研究日誌變數 ★ ---
     user_message_type = "unknown"
     user_content = ""
-    image_url_to_save = "" # ★ 新增：儲存圖片 URL
+    image_url_to_save = "" 
     vision_analysis = ""
     rag_context = ""
-    final_text = "" # AI 的最終回覆
+    final_text = "" 
 
     # 1. 讀取「過去的記憶」
     past_history = get_chat_history(user_id)
 
     # 2. 根據「記憶」開啟「對話宗師」的對話
     try:
-         chat_session = model.start_chat(history=past_history) # model = 'gemini-2.5-pro'
+         # ★「PS5」的語法是 client.chats.create
+         # ★「專家一」使用 CHAT_MODEL (gemini-2.5-pro)
+         chat_session = client.chats.create(
+             model=CHAT_MODEL, 
+             history=past_history, 
+             config=generation_config # ★「PS5」的 config 在這裡傳入
+         )
     except Exception as start_chat_e:
          print(f"!!! 警告：從歷史紀錄開啟對話失敗。使用空對話。錯誤：{start_chat_e}")
-         chat_session = model.start_chat(history=[])
+         chat_session = client.chats.create(model=CHAT_MODEL, history=[], config=generation_config)
 
     # 3. 準備「當前的輸入」(★ 兩階段專家系統 ★)
-    prompt_parts = []
+    contents_to_send = [] # ★「PS5」的輸入
     user_question = "" 
 
     try:
         if isinstance(event.message, ImageMessage):
             # --- ★ 第八紀元：上傳圖片到「永恆檔案館」 ★ ---
             user_message_type = "image"
-            user_content = f"Image received (Message ID: {event.message.id})" # 記錄圖片 ID
+            user_content = f"Image received (Message ID: {event.message.id})" 
 
             print(f"--- (Cloudinary) 收到來自 user_id '{user_id}' 的圖片，開始上傳... ---")
             message_content = line_bot_api.get_message_content(event.message.id)
-            image_bytes = message_content.content # ★ 直接使用原始 bytes
+            image_bytes = message_content.content 
 
             try:
                 upload_result = cloudinary.uploader.upload(image_bytes)
@@ -373,16 +411,14 @@ def handle_message(event):
                 if image_url_to_save:
                     print(f"--- (Cloudinary) 圖片上傳成功！URL: {image_url_to_save} ---")
                 else:
-                    print(f"!!! 錯誤：Cloudinary 未返回 URL。")
                     image_url_to_save = "upload_failed"
             except Exception as upload_e:
                 print(f"!!! 嚴重錯誤：Cloudinary 圖片上傳失敗。錯誤：{upload_e}")
                 image_url_to_save = f"upload_error: {upload_e}"
 
-            # --- ★ 專家二：「視覺專家」啟動 (第十三紀元：精準讀取版) ★ ---
-            print(f"--- (視覺專家) 正在分析圖片... ---")
-            vision_model = genai.GenerativeModel('gemini-2.5-flash-image') 
-            img = Image.open(io.BytesIO(image_bytes)) # 重新打開 bytes 以供 vision
+            # --- ★ 專家二：「視覺專家」啟動 (第十五紀元：雙重專家) ★ ---
+            print(f"--- (視覺專家) 正在分析圖片 (使用 {VISION_MODEL})... ---")
+            img = Image.open(io.BytesIO(image_bytes)) # ★「PS5」SDK 支援 PIL Image
 
             # ★ 第十三紀元：使用「精準讀取」的視覺 Prompt ★
             vision_prompt = """
@@ -411,8 +447,13 @@ def handle_message(event):
             請直接開始你的「客觀描述」。
             """
 
-            vision_response = vision_model.generate_content([vision_prompt, img])
-            vision_analysis = vision_response.text # ★ 記錄「視覺分析」
+            # ★「PS5」的語法是 client.models.generate_content
+            # ★「專家二」使用 VISION_MODEL (gemini-2.5-flash-image)
+            vision_response = client.models.generate_content(
+                model=VISION_MODEL, 
+                contents=[img, vision_prompt] # ★「PS5」的多模態輸入
+            )
+            vision_analysis = vision_response.text 
             print(f"--- (視覺專家) 分析完畢：{vision_analysis[:70]}... ---")
 
             user_question = f"圖片內容分析：『{vision_analysis}』。請基於這個分析，開始用蘇格拉底式教學法引導我。"
@@ -421,12 +462,12 @@ def handle_message(event):
             # --- ★ 傳統文字訊息 ★ ---
             user_message_type = "text"
             user_question = event.message.text
-            user_content = user_question # ★ 記錄「學生文字」
+            user_content = user_question 
             print(f"--- (文字 RAG) 收到來自 user_id '{user_id}' 的文字訊息... ---")
 
         # --- ★ 統一 RAG 流程 (無論是文字還是圖片分析) ★ ---
-        print(f"--- (RAG) TAG: 正在為「{user_question[:30]}...」執行 RAG 搜尋... ---")
-        rag_context = find_relevant_chunks(user_question) # ★ 記錄「RAG 內容」
+        print(f"--- (RAG) 正在為「{user_question[:30]}...」執行 RAG 搜尋... ---")
+        rag_context = find_relevant_chunks(user_question) 
 
         # ★ 第十二紀元：修改 RAG 提示詞 (中文版) ★
         rag_prompt = f"""
@@ -440,12 +481,13 @@ def handle_message(event):
         1.  「首先」檢查「原始輸入」是否為「一個指令」(例如：教我物理觀念)。如果是，請「立刻執行指令」。
         2.  「如果不是」指令，才「接著」使用「相關段落」和「評估者邏輯」來回應。)
         """
-        prompt_parts = [rag_prompt]
+        contents_to_send = [rag_prompt] # ★「PS5」的語法
 
-        # --- ★ 專家一：「對話宗師」啟動 (第十二紀元：評估版) ★ ---
-        print(f"--- (對話宗師) 正在呼叫 Gemini API (gemini-2.5-pro)... ---")
-        response = chat_session.send_message(prompt_parts) # ★ 呼叫 'gemini-1.0-pro'
-        final_text = response.text # ★ 記錄「AI 回覆」
+        # --- ★ 專家一：「對話宗師」啟動 (第十五紀元：雙重專家) ★ ---
+        print(f"--- (對話宗師) 正在呼叫 Gemini API ({CHAT_MODEL})... ---")
+        # ★「PS5」的語法是 chat.send_message
+        response = chat_session.send_message(contents=contents_to_send)
+        final_text = response.text 
         print(f"--- (對話宗師) Gemini API 回應成功 ---")
 
         # 5. 儲存「更新後的記憶」(AI 記憶)
@@ -456,18 +498,16 @@ def handle_message(event):
     except Exception as e:
         print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG/視覺操作失敗。錯誤：{e}")
         final_text = "抱歉，宗師目前正在檢索記憶/教科書或冥想中，請稍後再試。"
-        # ★ 確保錯誤日誌也能被儲存
         if not user_content: user_content = "Error during processing"
         if not user_message_type: user_message_type = "error"
 
     # ★★★【第八紀元：最終儲存】★★★
     # 6. 儲存「研究日誌」(人類研究)
-    # (無論成功或失敗，都儲存日誌)
     save_to_research_log(
         user_id=user_id,
         user_msg_type=user_message_type,
         user_content=user_content,
-        image_url=image_url_to_save, # ★ 傳入「圖片 URL」
+        image_url=image_url_to_save, 
         vision_analysis=vision_analysis,
         rag_context=rag_context,
         ai_response=final_text
@@ -481,5 +521,4 @@ def handle_message(event):
 
 # --- 步驟十：啟動「神殿」 ---
 if __name__ == "__main__":
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
+    port = int(os.environ.get('PORT', 808
