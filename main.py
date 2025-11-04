@@ -122,7 +122,7 @@ system_prompt = """
 
 # --- 步驟五 & 六：AI 宗師的「大腦」設定 (★ 專家一：對話宗師 ★) ---
 model = genai.GenerativeModel(
-    model_name='gemini-1.0-pro', # ★ 修正：使用 0.8.5 兼容的「正確」名稱 (修復 404 / 2.5-pro 錯誤)
+    model_name='gemini-2.5-pro', # ★ 修正：使用 0.8.5 兼容的「正確」名稱 (修復 404 / 2.5-pro 錯誤)
     system_instruction=system_prompt,
     safety_settings={
         HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -348,7 +348,7 @@ def handle_message(event):
 
     # 2. 根據「記憶」開啟「對話宗師」的對話
     try:
-         chat_session = model.start_chat(history=past_history) # model = 'gemini-1.0-pro'
+         chat_session = model.start_chat(history=past_history) # model = 'gemini-2.5-pro'
     except Exception as start_chat_e:
          print(f"!!! 警告：從歷史紀錄開啟對話失敗。使用空對話。錯誤：{start_chat_e}")
          chat_session = model.start_chat(history=[])
@@ -381,7 +381,7 @@ def handle_message(event):
 
             # --- ★ 專家二：「視覺專家」啟動 (第十三紀元：精準讀取版) ★ ---
             print(f"--- (視覺專家) 正在分析圖片... ---")
-            vision_model = genai.GenerativeModel('models/gemini-pro-vision') 
+            vision_model = genai.GenerativeModel('gemini-2.5-flash-image') 
             img = Image.open(io.BytesIO(image_bytes)) # 重新打開 bytes 以供 vision
 
             # ★ 第十三紀元：使用「精準讀取」的視覺 Prompt ★
@@ -443,7 +443,7 @@ def handle_message(event):
         prompt_parts = [rag_prompt]
 
         # --- ★ 專家一：「對話宗師」啟動 (第十二紀元：評估版) ★ ---
-        print(f"--- (對話宗師) 正在呼叫 Gemini API (gemini-1.0-pro)... ---")
+        print(f"--- (對話宗師) 正在呼叫 Gemini API (gemini-2.5-pro)... ---")
         response = chat_session.send_message(prompt_parts) # ★ 呼叫 'gemini-1.0-pro'
         final_text = response.text # ★ 記錄「AI 回覆」
         print(f"--- (對話宗師) Gemini API 回應成功 ---")
