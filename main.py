@@ -381,7 +381,7 @@ def handle_message(event):
 
             # --- ★ 專家二：「視覺專家」啟動 (第十三紀元：精準讀取版) ★ ---
             print(f"--- (視覺專家) 正在分析圖片... ---")
-            vision_model = genai.GenerativeModel('gemini-1.0-pro-vision') 
+            vision_model = genai.GenerativeModel('models/gemini-pro-vision') 
             img = Image.open(io.BytesIO(image_bytes)) # 重新打開 bytes 以供 vision
 
             # ★ 第十三紀元：使用「精準讀取」的視覺 Prompt ★
