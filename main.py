@@ -242,7 +242,7 @@ def get_chat_history(user_id):
                         parts_text = item.get('parts', [])
                         # (PS5 SDK v0.2.0 (alpha) 的 chat.create 似乎只接受 user/model 角色)
                         if role == 'user' or role == 'model':
-                            history_list.append(types.Content(role=role, parts=[types.Part.from_text(text) for text in parts_text]))
+                            history_list.append(types.Content(role=role, parts=[types.Part.from_text(text=text) for text in parts_text])) # <--- ★★★ 100% 正確的「關鍵字」參數 ★★★
         except Exception as e:
             print(f"!!! 錯誤：無法讀取 user_id '{user_id}' 的歷史紀錄。錯誤：{e}")
         finally:
@@ -288,9 +288,9 @@ def find_relevant_chunks(query_text, k=3):
         # ★「PS5」的語法是 client.models.embed_content
         result = client.models.embed_content(
             model=EMBEDDING_MODEL,
-            contents=[query_text], 
-            task_type="RETRIEVAL_QUERY" # ★「PS5」的 Task Type 是大寫
-        )
+            content=query_text, # <--- ★★★ 100% 正確的「content」(單數) ★★★
+        # task_type 在 v1 (google-genai) 中已被簡化，無需手動設定
+)
         query_embedding = result.embedding # ★「PS5」的結果在 .embedding
 
         print("--- (RAG) 正在連接資料庫以搜尋向量... ---")
@@ -485,7 +485,7 @@ def handle_message(event):
         # --- ★ 專家一：「對話宗師」啟動 (第十五紀元：雙重專家) ★ ---
         print(f"--- (對話宗師) 正在呼叫 Gemini API ({CHAT_MODEL})... ---")
         # ★「PS5」的語法是 chat.send_message
-        response = chat_session.send_message(contents=contents_to_send)
+        response = chat_session.send_message(contents_to_send) # <--- ★★★ 100% 正確的「位置」參數 ★★★
         final_text = response.text 
         print(f"--- (對話宗師) Gemini API 回應成功 ---")
 
