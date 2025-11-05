@@ -197,7 +197,7 @@ def initialize_database():
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS research_log (
                         id SERIAL PRIMARY KEY,
-                        timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                        timestamp TIMESTZ DEFAULT CURRENT_TIMESTAMP,
                         user_id TEXT,
                         user_message_type TEXT,
                         user_content TEXT,
