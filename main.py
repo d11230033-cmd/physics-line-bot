@@ -1,4 +1,3 @@
-
 import os
 import json
 import datetime
@@ -15,12 +14,15 @@ from google import genai
 from google.genai import types
 from pgvector.psycopg2 import register_vector
 
+from io import BytesIO
+from PIL import Image
+
 # -----------------------------
 # Step 1: Read env vars (Render)
 # -----------------------------
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
-DATABASE_URL = os.environ.get('DATABASE_URL')  # e.g. Neon
+DATABASE_URL = os.environ.get('DATABASE_URL')
 # GEMINI_API_KEY will be picked up automatically by genai.Client()
 
 CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME')
@@ -38,7 +40,7 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 # Step 3: GenAI client (PS5)
 # -----------------------------
 try:
-    client = genai.Client()  # GEMINI_API_KEY pulled from env
+    client = genai.Client()
     print('--- (Gemini) ★ PS5 SDK (google-genai) 連接成功！ ★ ---')
 except Exception as e:
     print(f'!!! 嚴重錯誤：無法設定 Google API Key (GEMINI_API_KEY)。錯誤：{e}')
@@ -62,11 +64,9 @@ except Exception as e:
 # -----------------------------
 CHAT_MODEL = 'gemini-2.5-pro'
 VISION_MODEL = 'gemini-2.5-flash-image'
-# IMPORTANT: PS5 expects the short name without "models/"
 EMBEDDING_MODEL = 'text-embedding-004'
 VECTOR_DIMENSION = 768
 
-# Generation config (optional but useful)
 generation_config = types.GenerateContentConfig(
     temperature=0.6,
     top_p=0.9,
@@ -110,7 +110,6 @@ def initialize_database():
         register_vector(conn)
         print('--- (SQL) `register_vector` 成功 ---')
         with conn.cursor() as cur:
-            # chat history
             cur.execute(
                 '''
                 CREATE TABLE IF NOT EXISTS chat_history (
@@ -121,19 +120,17 @@ def initialize_database():
             )
             print('--- (SQL) 表格 `chat_history` 確認/建立成功 ---')
 
-            # RAG vectors
             cur.execute(
                 f'''
                 CREATE TABLE IF NOT EXISTS physics_vectors (
                     id SERIAL PRIMARY KEY,
                     content TEXT,
-                    embedding VECTOR({VECTOR_DIMENSION})
+                    embedding VECTOR({{}})
                 );
-                '''
+                '''.format(VECTOR_DIMENSION)
             )
             print(f'--- (SQL) 表格 `physics_vectors` (維度 {VECTOR_DIMENSION}) 確認/建立成功 ---')
 
-            # research log
             cur.execute(
                 '''
                 CREATE TABLE IF NOT EXISTS research_log (
@@ -192,7 +189,7 @@ def save_chat_history(user_id: str, chat_session):
         return
     try:
         history_to_save = []
-        history = chat_session.get_history()  # PS5
+        history = chat_session.get_history()
         if history:
             for msg in history:
                 if msg.role in ('user', 'model'):
@@ -223,12 +220,10 @@ def find_relevant_chunks(query_text: str, k: int = 3):
     conn = None
     try:
         print(f'--- (RAG) 正在為問題「{query_text[:20]}...」向 Gemini 請求向量... ---')
-        # PS5: embed_content returns .embeddings list
         emb_resp = client.models.embed_content(
             model=EMBEDDING_MODEL,
-            contents=[query_text],  # list!
+            contents=[query_text],
         )
-        # FIX 1: Pull values from emb_resp.embeddings[0].values
         query_embedding = emb_resp.embeddings[0].values
 
         print('--- (RAG) 正在連接資料庫以搜尋向量... ---')
@@ -238,7 +233,6 @@ def find_relevant_chunks(query_text: str, k: int = 3):
         register_vector(conn)
 
         with conn.cursor() as cur:
-            # FIX 2: cast to ::vector for pgvector
             cur.execute(
                 'SELECT content FROM physics_vectors ORDER BY embedding <-> %s::vector LIMIT %s',
                 (query_embedding, k),
@@ -283,12 +277,8 @@ def save_to_research_log(user_id, user_msg_type, user_content, image_url, vision
     finally:
         conn.close()
 
-# Initialize tables at import time
 initialize_database()
 
-# -----------------------------
-# Webhook endpoints
-# -----------------------------
 @app.route('/callback', methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
@@ -318,10 +308,8 @@ def handle_message(event):
     rag_context = ''
     final_text = ''
 
-    # 1) Load memory
     past_history = get_chat_history(user_id)
 
-    # 2) Start chat
     try:
         chat_session = client.chats.create(
             model=CHAT_MODEL,
@@ -333,14 +321,11 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text='抱歉，宗師暫時繁忙中。'))
         return
 
-    # ------------ handle TEXT ------------
     if isinstance(event.message, TextMessage):
         user_message_type = 'text'
         user_content = event.message.text.strip()
-        # RAG
         rag_context = find_relevant_chunks(user_content, k=3)
 
-        # Send with context
         prompt = f"""
 你是物理教師助手。請根據下列「教材知識庫」補充解答（若為 N/A 則直接回覆）：
 [教材知識庫]
@@ -359,24 +344,29 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text='抱歉，我卡住了，稍後再試！'))
             return
 
-    # ------------ handle IMAGE ------------
     elif isinstance(event.message, ImageMessage):
         user_message_type = 'image'
         try:
             message_content = line_bot_api.get_message_content(event.message.id)
-            # Save to Cloudinary
+            img_bytes = message_content.content
+
             upload_result = cloudinary.uploader.upload(
-                message_content.content,
+                img_bytes,
                 folder='line-uploads',
                 resource_type='image',
             )
             image_url_to_save = upload_result.get('secure_url', '')
-            # Ask vision model
+
+            try:
+                mime = Image.open(BytesIO(img_bytes)).get_format_mimetype() or 'image/jpeg'
+            except Exception:
+                mime = 'image/jpeg'
+
             vision_resp = client.models.generate_content(
                 model=VISION_MODEL,
                 contents=[
                     '請用中文條列說明這張照片的重點（最多 6 點）。',
-                    types.Part.from_uri(file_uri=image_url_to_save, mime_type='image/jpeg'),
+                    types.Part.from_bytes(data=img_bytes, mime_type=mime),
                 ],
             )
             vision_analysis = vision_resp.text
@@ -385,7 +375,6 @@ def handle_message(event):
             print(f'!!! 錯誤：影像處理失敗：{img_e}')
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text='影像辨識目前無法使用。'))
 
-    # 3) Save memory + research log
     try:
         save_chat_history(user_id, chat_session)
         save_to_research_log(
@@ -401,5 +390,4 @@ def handle_message(event):
         print(f'!!! 錯誤：寫入歷史/研究日誌失敗：{save_e}')
 
 if __name__ == '__main__':
-    # For local testing only; Render will run via gunicorn
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
