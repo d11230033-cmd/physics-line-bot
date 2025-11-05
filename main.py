@@ -197,7 +197,7 @@ def initialize_database():
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS research_log (
                         id SERIAL PRIMARY KEY,
-                        timestamp TIMESTZ DEFAULT CURRENT_TIMESTAMP,
+                        timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                         user_id TEXT,
                         user_message_type TEXT,
                         user_content TEXT,
@@ -488,7 +488,7 @@ def handle_message(event):
         # ★ 修正：使用「位置」參數
         response = chat_session.send_message(contents_to_send)
         final_text = response.text 
-        print(f"--- (對話宗師) Gemini API 回應成功 ---")
+        print(f"--- (對話宗Master) Gemini API 回應成功 ---")
 
         # 5. 儲存「更新後的記憶」(AI 記憶)
         print(f"--- (記憶) 正在儲存 user_id '{user_id}' 的對話紀錄... ---")
