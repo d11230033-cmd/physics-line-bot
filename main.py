@@ -74,7 +74,7 @@ except Exception as e:
 # --- ★ 第十五紀元：定義「雙重專家」模型 ★ ---
 CHAT_MODEL = 'gemini-2.5-pro'           # ★ 專家一：複雜推理
 VISION_MODEL = 'gemini-2.5-flash-image'  # ★ 專家二：影像分析
-EMBEDDING_MODEL = 'mtext-embedding-004' # (保持不變，這是標準)
+EMBEDDING_MODEL = 'models/gemini-embedding-001' # (保持不變，這是標準)
 VECTOR_DIMENSION = 768 # ★ 向量維度 768
 
 # --- 步驟四：AI 宗師的「靈魂」核心 (★ 第十三紀元：精準視覺 ★) ---
