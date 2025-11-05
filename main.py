@@ -74,7 +74,7 @@ except Exception as e:
 # --- ★ 第十五紀元：定義「雙重專家」模型 ★ ---
 CHAT_MODEL = 'gemini-2.5-pro'           # ★ 專家一：複雜推理
 VISION_MODEL = 'gemini-2.5-flash-image'  # ★ 專家二：影像分析
-EMBEDDING_MODEL = 'models/text-embedding-004' # (保持不變，這是標準)
+EMBEDDING_MODEL = 'text-embedding-004' # (保持不變，這是標準)
 VECTOR_DIMENSION = 768 # ★ 向量維度 768
 
 # --- 步驟四：AI 宗師的「靈魂」核心 (★ 第十三紀元：精準視覺 ★) ---
@@ -288,11 +288,11 @@ def find_relevant_chunks(query_text, k=3):
         print(f"--- (RAG) 正在為問題「{query_text[:20]}...」向 Gemini 請求向量... ---")
         # ★ 修正：使用「contents=[]」(複數) 參數，並「移除」task_type
         result = client.models.embed_content(
-            model=EMBEDDING_MODEL,
-            contents=[query_text] # ★ 100% 正確的「contents」(複數) + 列表 []
-            # ★ 100% 修正：移除「task_type」參數
+            model=EMBEDDING_MODEL,           # 建議：'text-embedding-004'
+            contents=[query_text]
         )
-        query_embedding = result.embedding # ★「PS5」的結果在 .embedding
+        query_embedding = result.embeddings[0].values  # ← 改這行
+
 
         print("--- (RAG) 正在連接資料庫以搜尋向量... ---")
         conn = get_db_connection()
