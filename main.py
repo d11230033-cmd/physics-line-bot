@@ -226,7 +226,7 @@ def initialize_database():
         finally:
             conn.close()
 
-# --- ★ 第十六紀元：修正「幽靈 A」 (記憶) ★ ---
+# --- ★ 第十七紀元：修正「幽靈 A」 (記憶) ★ ---
 def get_chat_history(user_id):
     conn = get_db_connection()
     history_list = [] # ★「PS5」需要「Content 物件」列表
@@ -277,7 +277,7 @@ def save_chat_history(user_id, chat_session):
         finally:
             conn.close()
 
-# --- ★ 第十六紀元：修正「幽靈 B」 (RAG 搜尋) ★ ---
+# --- ★ 第十七紀元：修正「幽靈 B」 (RAG 搜尋) ★ ---
 def find_relevant_chunks(query_text, k=3):
     """搜尋最相關的 k 個教科書段落 (使用 Gemini Embedding)"""
 
@@ -286,11 +286,11 @@ def find_relevant_chunks(query_text, k=3):
 
     try:
         print(f"--- (RAG) 正在為問題「{query_text[:20]}...」向 Gemini 請求向量... ---")
-        # ★ 修正：使用「contents=[]」(複數) 參數
+        # ★ 修正：使用「contents=[]」(複數) 參數，並「移除」task_type
         result = client.models.embed_content(
             model=EMBEDDING_MODEL,
-            contents=[query_text], # ★ 100% 正確的「contents」(複數) + 列表 []
-            task_type="RETRIEVAL_QUERY" # ★「PS5」的 Task Type 是大寫
+            contents=[query_text] # ★ 100% 正確的「contents」(複數) + 列表 []
+            # ★ 100% 修正：移除「task_type」參數
         )
         query_embedding = result.embedding # ★「PS5」的結果在 .embedding
 
@@ -483,7 +483,7 @@ def handle_message(event):
         """
         contents_to_send = [rag_prompt] # ★「PS5」的語法
 
-        # --- ★ 專家一：「對話宗師」啟動 (第十六紀元：修正幽靈 C) ★ ---
+        # --- ★ 專家一：「對話宗師」啟動 (第十七紀元：修正幽靈 C) ★ ---
         print(f"--- (對話宗師) 正在呼叫 Gemini API ({CHAT_MODEL})... ---")
         # ★ 修正：使用「位置」參數
         response = chat_session.send_message(contents_to_send)
