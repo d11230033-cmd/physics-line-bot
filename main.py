@@ -1,11 +1,11 @@
-# --- 「神殿」：AI 宗師的核心 (第十五紀元：雙重專家版) ---
+# --- 「神殿」：AI 宗師的核心 (第十七紀元：最終語法修正版) ---
 #
-# 版本：Neon 記憶 + 雙重專家 (視覺+對話) + 檔案館 + 指令中心
 # SDK：★「全新」 google-genai (PS5 SDK) ★
 # 模型：★「專家一」 gemini-2.5-pro (對話) ★
 # 模型：★「專家二」 gemini-2.5-flash-image (視覺) ★
 # 修正：1. Python 3.11 / WEB_CONCURRENCY=1 (在 Render 設定)
 # 修正：2. ★ 第十三紀元：Socratic Evaluator (精準視覺) ★
+# 修正：3. ★ 第十六紀元：修正「三大 Syntax 幽靈」 ★
 # -----------------------------------
 
 import os
@@ -18,6 +18,7 @@ from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMess
 # --- ★ 第十四紀元：全新 SDK ★ ---
 from google import genai
 from google.genai import types
+# from google.genai.types import content_types # <-- ★ 第十五紀元 Bug：已移除 ★
 from google.genai.types import HarmCategory, HarmBlockThreshold
 
 from PIL import Image
@@ -225,7 +226,7 @@ def initialize_database():
         finally:
             conn.close()
 
-# --- ★ 第十四紀元：重寫「讀取記憶」 (PS5 語法) ★ ---
+# --- ★ 第十六紀元：修正「幽靈 A」 (記憶) ★ ---
 def get_chat_history(user_id):
     conn = get_db_connection()
     history_list = [] # ★「PS5」需要「Content 物件」列表
@@ -240,9 +241,9 @@ def get_chat_history(user_id):
                     for item in history_json:
                         role = item.get('role', 'user')
                         parts_text = item.get('parts', [])
-                        # (PS5 SDK v0.2.0 (alpha) 的 chat.create 似乎只接受 user/model 角色)
                         if role == 'user' or role == 'model':
-                            history_list.append(types.Content(role=role, parts=[types.Part.from_text(text=text) for text in parts_text])) # <--- ★★★ 100% 正確的「關鍵字」參數 ★★★
+                            # ★ 修正：使用「關鍵字」參數
+                            history_list.append(types.Content(role=role, parts=[types.Part.from_text(text=text) for text in parts_text]))
         except Exception as e:
             print(f"!!! 錯誤：無法讀取 user_id '{user_id}' 的歷史紀錄。錯誤：{e}")
         finally:
@@ -276,7 +277,7 @@ def save_chat_history(user_id, chat_session):
         finally:
             conn.close()
 
-# --- ★ 第十四紀元：重寫「RAG 搜尋」 (PS5 語法) ★ ---
+# --- ★ 第十六紀元：修正「幽靈 B」 (RAG 搜尋) ★ ---
 def find_relevant_chunks(query_text, k=3):
     """搜尋最相關的 k 個教科書段落 (使用 Gemini Embedding)"""
 
@@ -285,12 +286,12 @@ def find_relevant_chunks(query_text, k=3):
 
     try:
         print(f"--- (RAG) 正在為問題「{query_text[:20]}...」向 Gemini 請求向量... ---")
-        # ★「PS5」的語法是 client.models.embed_content
+        # ★ 修正：使用「contents=[]」(複數) 參數
         result = client.models.embed_content(
             model=EMBEDDING_MODEL,
-            content=query_text, # <--- ★★★ 100% 正確的「content」(單數) ★★★
-        # task_type 在 v1 (google-genai) 中已被簡化，無需手動設定
-)
+            contents=[query_text], # ★ 100% 正確的「contents」(複數) + 列表 []
+            task_type="RETRIEVAL_QUERY" # ★「PS5」的 Task Type 是大寫
+        )
         query_embedding = result.embedding # ★「PS5」的結果在 .embedding
 
         print("--- (RAG) 正在連接資料庫以搜尋向量... ---")
@@ -482,10 +483,10 @@ def handle_message(event):
         """
         contents_to_send = [rag_prompt] # ★「PS5」的語法
 
-        # --- ★ 專家一：「對話宗師」啟動 (第十五紀元：雙重專家) ★ ---
+        # --- ★ 專家一：「對話宗師」啟動 (第十六紀元：修正幽靈 C) ★ ---
         print(f"--- (對話宗師) 正在呼叫 Gemini API ({CHAT_MODEL})... ---")
-        # ★「PS5」的語法是 chat.send_message
-        response = chat_session.send_message(contents_to_send) # <--- ★★★ 100% 正確的「位置」參數 ★★★
+        # ★ 修正：使用「位置」參數
+        response = chat_session.send_message(contents_to_send)
         final_text = response.text 
         print(f"--- (對話宗師) Gemini API 回應成功 ---")
 
