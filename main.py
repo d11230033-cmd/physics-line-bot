@@ -6,6 +6,8 @@
 # 修正：1. Python 3.11 / WEB_CONCURRENCY=1 (在 Render 設定)
 # 修正：2. ★ 第十三紀元：Socratic Evaluator (精準視覺) ★
 # 修正：3. ★ 第十六紀元：修正「三大 Syntax 幽靈」 ★
+# 修正：4. ★ (Gemini) 修正 RAG 搜尋的 'result.embedding' 語法錯誤 ★
+# 修正：5. ★ (Postgres) 修正 NUL (0x00) 字元寫入資料庫的錯誤 ★
 # -----------------------------------
 
 import os
@@ -74,7 +76,7 @@ except Exception as e:
 # --- ★ 第十五紀元：定義「雙重專家」模型 ★ ---
 CHAT_MODEL = 'gemini-2.5-pro'           # ★ 專家一：複雜推理
 VISION_MODEL = 'gemini-2.5-flash-image'  # ★ 專家二：影像分析
-EMBEDDING_MODEL = 'models/gemini-embedding-001' # (保持不變，這是標準)
+EMBEDDING_MODEL = 'models/text-embedding-004' # (保持不變，這是標準)
 VECTOR_DIMENSION = 768 # ★ 向量維度 768
 
 # --- 步驟四：AI 宗師的「靈魂」核心 (★ 第十三紀元：精準視覺 ★) ---
@@ -277,7 +279,7 @@ def save_chat_history(user_id, chat_session):
         finally:
             conn.close()
 
-# --- ★ 第十七紀元：修正「幽靈 B」 (RAG 搜尋) ★ ---
+# --- ★ 第十七紀元 (修正版)：修正「幽靈 B」 (RAG 搜尋) ★ ---
 def find_relevant_chunks(query_text, k=3):
     """搜尋最相關的 k 個教科書段落 (使用 Gemini Embedding)"""
 
@@ -285,14 +287,18 @@ def find_relevant_chunks(query_text, k=3):
     if not client: return "N/A" # 檢查 client 是否成功初始化
 
     try:
-        print(f"--- (RAG) 正在為問題「{query_text[:20]}...」向 Gemini 請求向量... ---")
-        # ★ 修正：使用「contents=[]」(複數) 參數，並「移除」task_type
+        # ★★★ (新修正) 清理來自使用者輸入的 NUL (0x00) 字元 ★★★
+        cleaned_query_text = query_text.replace('\x00', '')
+
+        print(f"--- (RAG) 正在為問題「{cleaned_query_text[:20]}...」向 Gemini 請求向量... ---")
+        
         result = client.models.embed_content(
             model=EMBEDDING_MODEL,
-            contents=[query_text] # ★ 100% 正確的「contents」(複數) + 列表 []
-            # ★ 100% 修正：移除「task_type」參數
+            contents=[cleaned_query_text] # ★ 使用清理過的查詢
         )
-        query_embedding = result.embeddings[0].values # ★「PS5」的結果在 .embedding
+        
+        # ★ 修正：.embeddings (複數) 是一個列表，取 [0]，再取 .values
+        query_vector = result.embeddings[0].values 
 
         print("--- (RAG) 正在連接資料庫以搜尋向量... ---")
         conn = get_db_connection()
@@ -305,7 +311,7 @@ def find_relevant_chunks(query_text, k=3):
             # ★ 修正：加入 ::vector 類型轉換 (修復 RAG 搜尋)
             cur.execute(
                 "SELECT content FROM physics_vectors ORDER BY embedding <-> %s::vector LIMIT %s",
-                (query_embedding, k)
+                (query_vector, k) # ★ 修正：使用 query_vector
             )
             results = cur.fetchall()
 
@@ -313,6 +319,7 @@ def find_relevant_chunks(query_text, k=3):
             print("--- (RAG) 警告：在資料庫中找不到相關段落。 ---")
             return "N/A"
 
+        # (從資料庫讀取出的 content 理論上在重建時已被清理)
         context = "\n\n---\n\n".join([row[0] for row in results])
         print(f"--- (RAG) 成功找到 {len(results)} 個相關段落！ ---")
         return context
@@ -503,23 +510,27 @@ def handle_message(event):
 
     # ★★★【第八紀元：最終儲存】★★★
     # 6. 儲存「研究日誌」(人類研究)
+    
+    # ★ 修正：在儲存前，清理所有字串中的 NUL (0x00) 字元 ★
     save_to_research_log(
-        user_id=user_id,
-        user_msg_type=user_message_type,
-        user_content=user_content,
-        image_url=image_url_to_save, 
-        vision_analysis=vision_analysis,
-        rag_context=rag_context,
-        ai_response=final_text
+        user_id=user_id.replace('\x00', ''),
+        user_msg_type=user_message_type.replace('\x00', ''),
+        user_content=user_content.replace('\x00', ''),
+        image_url=image_url_to_save.replace('\x00', ''), 
+        vision_analysis=vision_analysis.replace('\x00', ''),
+        rag_context=rag_context.replace('\x00', ''),
+        ai_response=final_text.replace('\x00', '')
     )
 
     # 7. 回覆使用者
     line_bot_api.reply_message(
         event.reply_token, 
-        TextSendMessage(text=final_text)
+        SendMessage(text=final_text.replace('\x00', '')) # ★ (保險) 同時清理最終送出的文字
     )
 
 # --- 步驟十：啟動「神殿」 ---
 if __name__ == "__main__":
+    # ★ 修正：從 gunicorn 接收 PORT
     port = int(os.environ.get('PORT', 8080))
+    # ★ 修正：移除 debug=True，由 gunicorn 控制
     app.run(host='0.0.0.0', port=port)

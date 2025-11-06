@@ -1,6 +1,6 @@
 # 檔案：rebuild_database.py
 # 
-# ★★★ 自動化升級版 (已修正 'embeddings' 錯誤) ★★★
+# ★★★ 自動化升級版 (已修正 'embeddings' 錯誤 + 'NUL' 字元清理) ★★★
 # 
 # 目的：(一次性腳本) 自動掃描 'corpus' 資料夾中的所有文件 (PDF, TXT, MD)，
 #      清空並重建 RAG 知識庫 (physics_vectors)，
@@ -133,23 +133,28 @@ def main():
             print(f"--- (RAG) 即將開始為 {total_chunks} 個片段產生 768 維向量 (使用 {EMBEDDING_MODEL})... ---")
             print("這可能需要幾分鐘，請耐心等候...")
 
-            for i, chunk_content in enumerate(chunks_to_process):
+            for i, chunk_content_raw in enumerate(chunks_to_process):
+                
+                # ★★★ (新修正) 清理 NUL (0x00) 字元 ★★★
+                chunk_content = chunk_content_raw.replace('\x00', '')
+                
                 # 顯示進度
                 print(f"  正在產生向量 {i+1}/{total_chunks} ...")
                 
                 # 1. 產生 768 維向量
+                #    (我們使用「清理過」的 chunk_content 產生向量)
                 result = client.models.embed_content(
                     model=EMBEDDING_MODEL,
                     contents=[chunk_content] 
                 )
                 
-                # ★ 修正：.embeddings (複數) 是一個列表，取 [0]，再取 .values
                 embedding_vector = result.embeddings[0].values 
 
                 # 2. 存入資料庫
+                #    (我們使用「清理過」的 chunk_content 存入資料庫)
                 cur.execute(
                     "INSERT INTO physics_vectors (content, embedding) VALUES (%s, %s)",
-                    (chunk_content, embedding_vector) # ★ 修正：使用 embedding_vector
+                    (chunk_content, embedding_vector)
                 )
 
             print("--- (RAG) 所有新向量皆已成功產生並儲存！ ---")
