@@ -1,6 +1,6 @@
 # 檔案：rebuild_database.py
 # 
-# ★★★ 自動化升級版 ★★★
+# ★★★ 自動化升級版 (已修正 'embeddings' 錯誤) ★★★
 # 
 # 目的：(一次性腳本) 自動掃描 'corpus' 資料夾中的所有文件 (PDF, TXT, MD)，
 #      清空並重建 RAG 知識庫 (physics_vectors)，
@@ -124,7 +124,7 @@ def main():
         
         with conn.cursor() as cur:
             
-            # --- 關鍵步驟 (A)：清空舊的 (3072 維) 資料 ---
+            # --- 關鍵步驟 (A)：清空舊的資料 ---
             print("--- (SQL) 正在清空 'physics_vectors' 表格中的舊資料... ---")
             cur.execute("TRUNCATE TABLE physics_vectors RESTART IDENTITY;")
             print("--- (SQL) 舊資料已清空 ---")
@@ -142,12 +142,14 @@ def main():
                     model=EMBEDDING_MODEL,
                     contents=[chunk_content] 
                 )
-                embedding = result.embedding
+                
+                # ★ 修正：.embeddings (複數) 是一個列表，取 [0]，再取 .values
+                embedding_vector = result.embeddings[0].values 
 
                 # 2. 存入資料庫
                 cur.execute(
                     "INSERT INTO physics_vectors (content, embedding) VALUES (%s, %s)",
-                    (chunk_content, embedding)
+                    (chunk_content, embedding_vector) # ★ 修正：使用 embedding_vector
                 )
 
             print("--- (RAG) 所有新向量皆已成功產生並儲存！ ---")
