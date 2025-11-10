@@ -8,6 +8,7 @@
 # 修正：3. ★ 第十六紀元：修正「三大 Syntax 幽靈」 ★
 # 修正：4. ★ (Gemini) 修正 RAG 搜尋的 'result.embedding' 語法錯誤 ★
 # 修正：5. ★ (Postgres) 修正 NUL (0x00) 字元寫入資料庫的錯誤 ★
+# 修正：6. ★ (LineBot) 修正 'SendMessage' 的 NameError 錯字 ★
 # -----------------------------------
 
 import os
@@ -15,6 +16,7 @@ import pathlib
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
+# ★ 修正：我們需要 'TextSendMessage'
 from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMessage
 
 # --- ★ 第十四紀元：全新 SDK ★ ---
@@ -523,9 +525,10 @@ def handle_message(event):
     )
 
     # 7. 回覆使用者
+    # ★ 修正：將 'SendMessage' 修正回 'TextSendMessage'
     line_bot_api.reply_message(
         event.reply_token, 
-        SendMessage(text=final_text.replace('\x00', '')) # ★ (保險) 同時清理最終送出的文字
+        TextSendMessage(text=final_text.replace('\x00', '')) # ★ (保險) 同時清理最終送出的文字
     )
 
 # --- 步驟十：啟動「神殿」 ---
