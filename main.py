@@ -1,9 +1,9 @@
-# --- 「神殿」：AI 宗師的核心 (第十七紀元：最終語法修正版) ---
+# --- 「神殿」：AI 宗師的核心 (第十八紀元：最終繪圖版) ---
 #
 # SDK：★「全新」 google-genai (PS5 SDK) ★
 # ... (之前的所有修正)
-# 修正：12. ★ (架構還原) 恢復使用「Cloudinary」儲存圖片 (速度最快) ★
 # 修正：13. ★ (新功能) 新增「聽覺專家」，支援 LINE 錄音 (AudioMessage) ★
+# 修正：14. ★ (新功能) AI 宗師可以「繪製圖片」並回傳給學生 ★
 # -----------------------------------
 
 import os
@@ -11,8 +11,7 @@ import pathlib
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-# ★ (新功能) 引入 AudioMessage ★
-from linebot.models import MessageEvent, TextMessage, ImageMessage, AudioMessage, TextSendMessage
+from linebot.models import MessageEvent, TextMessage, ImageMessage, AudioMessage, TextSendMessage, ImageSendMessage
 
 # --- ★ 第十四紀元：全新 SDK ★ ---
 from google import genai
@@ -85,7 +84,7 @@ try:
     gc = gspread.authorize(CREDS)
     
     # 3. ★★★ (請修改) 開啟您的 Google Sheet (請用您在步驟1中建立的「檔案名稱」) ★★★
-    SHEET_FILE_NAME = "JYM物理AI助教_聊天日誌" # (請確認這個名稱與您的試算表檔案名稱 100% 一致)
+    SHEET_FILE_NAME = "AI_宗師_聊天日誌" # (請確認這個名稱與您的試算表檔案名稱 100% 一致)
     
     sh = gc.open(SHEET_FILE_NAME)
     
@@ -98,19 +97,19 @@ except Exception as e:
     worksheet = None # 連接失敗
 
 # --- ★ 第十五紀元：定義「雙重專家」模型 ★ ---
-CHAT_MODEL = 'gemini-2.5-pro'           # ★ 專家一：複雜推理、★ (新) 聽覺 ★
+CHAT_MODEL = 'gemini-2.5-pro'           # ★ 專家一：複雜推理、★ (新) 聽覺、★ (新) 繪圖控制 ★
 VISION_MODEL = 'gemini-2.5-flash-image'  # ★ 專家二：影像分析
 EMBEDDING_MODEL = 'models/text-embedding-004' # (保持不變，這是標準)
 VECTOR_DIMENSION = 768 # ★ 向量維度 768
 
-# --- 步驟四：AI 宗師的「靈魂」核心 (★ 無需變更 ★) ---
+# --- 步驟四：AI 宗師的「靈魂」核心 (★ 新增繪圖指令 ★) ---
 system_prompt = """
 你是一位頂尖的台灣高中物理教學AI，叫做「AI 宗師」。
 你的教學風格是「蘇格拉底式評估法」(Socratic Evaluator)。
 你「只會」收到三種輸入：
 1.  學生的「純文字提問」。
 2.  由「視覺專家」預先分析好的「圖片內容分析」。
-3.  ★ (新) 由「聽覺專家」預先分析好的「錄音內容分析」。
+3.  由「聽覺專家」預先分析好的「錄音內容分析」。
 
 # --- 你的「絕對核心」指令 ---
 1.  **「永遠不要」** 給出「直接的答案」或「最終的解題步驟」。
@@ -118,6 +117,19 @@ system_prompt = """
 3.  你的 **「所有」** 回應，**「必須」** 以一個「引導性的問題」來結束。(★ 除非你正在執行「筆記整理 + 類題確認」★)
 4.  **「絕對禁止」** 說出「答案是...」或「你應該要...」。
 5.  **「絕對必須」**：你「所有」的回應「必須」 100% 使用「繁體中文」(台灣用語)。「絕對禁止」使用「簡體中文」。
+
+# --- ★ 「繪圖魔法」指令 (第十四紀元：新功能) ★ ---
+* **你可以生成圖片。** 當你判斷「一張圖」會比「純文字」更能幫助學生理解**物理概念、力圖、運動軌跡、光學路徑、電路圖、圖表關係或任何幾何概念**時，你「必須」在回應中**「使用圖像生成標籤」**。
+* **生成圖片的格式：** 在你希望生成圖片的地方，插入這個標籤：`{draw:<圖片的詳細描述>}`。
+* **範例：**
+    * 如果你想畫一個自由落體的示意圖：`{draw:一個從高處自由落下的球，旁邊有重力向量向下}`
+    * 如果你想畫一個電路圖：`{draw:一個包含電池、燈泡和開關的簡單串聯電路圖}`
+    * 如果你想畫一個速度時間圖：`{draw:一個橫軸為時間(t)縱軸為速度(v)的速度時間圖，顯示物體以等加速度從靜止開始加速的直線}`
+* **限制：** 你**一次對話中「最多」只能生成一張圖片**。如果已經生成過圖片，就不要再生成。
+* **圖片描述要求：**
+    * **「必須」** 使用「繁體中文」。
+    * **「必須」** 盡可能「詳細」、「具體」，描述圖片的「核心物理元素」和「關係」。
+    * **「絕對禁止」** 在 `draw:` 後面加入任何「非描述性」的內容 (例如：「請畫」、「宗師畫圖」)。
 
 # --- ★ 「第十二紀元：中文指令」核心邏輯 ★ ---
 # 這是你最重要的思考流程！
@@ -243,8 +255,12 @@ def get_chat_history(user_id):
                     for item in history_json:
                         role = item.get('role', 'user')
                         parts_text = item.get('parts', [])
+                        # ★ 處理潛在的 `{draw:...}` 標籤，不把它當成文字訊息 ★
                         if role == 'user' or role == 'model':
-                            history_list.append(types.Content(role=role, parts=[types.Part.from_text(text=text) for text in parts_text]))
+                            # 過濾掉 {draw:...} 標籤，只保留純文字的部分
+                            filtered_parts = [p for p in parts_text if not p.strip().startswith('{draw:')]
+                            if filtered_parts: # 只有在有實際文字內容時才添加
+                                history_list.append(types.Content(role=role, parts=[types.Part.from_text(text=text) for text in filtered_parts]))
         except Exception as e:
             print(f"!!! 錯誤：無法讀取 user_id '{user_id}' 的歷史紀錄。錯誤：{e}")
         finally:
@@ -354,7 +370,7 @@ def callback():
         abort(400)
     return 'OK'
 
-# --- 步驟九：神殿的「主控室」(處理訊息) (★ 升級版：支援 AudioMessage ★) ---
+# --- 步驟九：神殿的「主控室」(處理訊息) (★ 升級版：支援 AudioMessage, Image Generation ★) ---
 @handler.add(MessageEvent, message=(TextMessage, ImageMessage, AudioMessage)) # ★ 支援 AudioMessage ★
 def handle_message(event):
 
@@ -369,10 +385,13 @@ def handle_message(event):
     user_message_type = "unknown"
     user_content = ""
     image_url_to_save = "" 
-    vision_analysis = "" # ★ (重要) 聽覺和視覺專家，都共用這個變數
+    vision_analysis = "" 
     rag_context = "" 
     final_text = "" 
-
+    
+    # ★ (新功能) 判斷是否已經生成過圖片，避免重複生成 ★
+    generated_image_in_this_session = False 
+    
     # 1. 讀取「過去的記憶」
     past_history = get_chat_history(user_id)
 
@@ -441,7 +460,7 @@ def handle_message(event):
                 model=VISION_MODEL, 
                 contents=[img, vision_prompt] 
             )
-            vision_analysis = vision_response.text # ★ 存入共用變數
+            vision_analysis = vision_response.text 
             print(f"--- (視覺專家) 分析完畢：{vision_analysis[:70]}... ---")
 
             user_question = f"圖片內容分析：『{vision_analysis}』。請基於這個分析，開始用蘇格拉底式教學法引導我。"
@@ -450,26 +469,22 @@ def handle_message(event):
             # --- ★ (新功能) 專家二：「聽覺專家」啟動 ★ ---
             user_message_type = "audio"
             user_content = f"Audio received (Message ID: {event.message.id})" 
-            image_url_to_save = "N/A (Audio Message)" # 聲音訊息沒有圖片 URL
+            image_url_to_save = "N/A (Audio Message)" 
 
             print(f"--- (聽覺專家) 收到來自 user_id '{user_id}' 的錄音，開始分析... ---")
             message_content = line_bot_api.get_message_content(event.message.id)
             audio_bytes = message_content.content
             
-            # LINE 預設的錄音格式是 'audio/m4a'
             audio_file = types.Part.from_data(data=audio_bytes, mime_type='audio/m4a')
 
             audio_prompt = """
             你是一個「精準的」聽打員和「語氣分析師」。
             你的「唯一」任務是「客觀地」分析這段學生的錄音。
-
             **「絕對禁止」**：
             * 「絕對禁止」你「自己」去「回答」錄音中的物理問題。
-
             你的「工作流程」是：
             1.  **「逐字稿」**：100% 精確地聽打出學生說的「每一句話」(使用繁體中文)。
             2.  **「語氣分析」**：客觀地描述學生的「情緒或語氣」(例如：聽起來很困惑、不確定、沮喪、有自信等)。
-
             請「只」回傳這兩項分析，不要有多餘的對話。
             例如：
             「
@@ -478,13 +493,12 @@ def handle_message(event):
             」
             """
             
-            # 我們使用最強的 CHAT_MODEL 來分析聲音
             speech_response = client.models.generate_content(
                 model=CHAT_MODEL, 
                 contents=[audio_file, audio_prompt]
             )
             
-            vision_analysis = speech_response.text # ★ 存入共用變數 (vision_analysis)
+            vision_analysis = speech_response.text 
             print(f"--- (聽覺專家) 分析完畢：{vision_analysis[:70]}... ---")
 
             user_question = f"錄音內容分析：『{vision_analysis}』。請基於這個分析，開始用蘇格拉底式教學法引導我。"
@@ -503,7 +517,7 @@ def handle_message(event):
         # ★ 第十二紀元：修改 RAG 提示詞 (中文版) ★
         rag_prompt = f"""
         ---「相關段落」開始---
-        {rag_content}
+        {rag_context}
         ---「相關段落」結束---
 
         學生的「原始輸入」(可能是「指令」、「回答」、「圖片分析」或「錄音分析」)：「{user_question}」
@@ -517,52 +531,128 @@ def handle_message(event):
         # --- ★ AI 宗師：「對話宗師」啟動 (★ 第十七紀元：加入自動重試) ★ ---
         print(f"--- (對話宗師) 正在呼叫 Gemini API ({CHAT_MODEL})... ---")
         
-        final_text = ""
-        max_retries = 2 # 嘗試 1 次 + 重試 1 次 = 共 2 次
+        # ★ (新功能) 準備存放 LINE 回覆的列表 ★
+        line_replies = []
+        
+        final_response_text = ""
+        max_retries = 2 
         attempt = 0
         
         while attempt < max_retries:
             try:
-                # 嘗試呼叫 API
                 response = chat_session.send_message(contents_to_send)
-                final_text = response.text
+                final_response_text = response.text
                 print(f"--- (對話宗師) Gemini API 回應成功 (嘗試第 {attempt + 1} 次) ---")
-                break # 成功！跳出重試迴圈
+                break 
 
             except Exception as chat_api_e:
                 attempt += 1
                 print(f"!!! (對話宗師) 警告：API 呼叫失敗 (第 {attempt} 次)。錯誤：{chat_api_e}")
                 
                 if attempt < max_retries:
-                    print(f"    ...  đang重試，等待 2 秒...")
-                    time.sleep(2) # 等待 2 秒
+                    print(f"    ... 正在重試，等待 2 秒...")
+                    time.sleep(2) 
                 else:
                     print(f"!!! (對話宗師) 嚴重錯誤：重試 {max_retries} 次後仍然失敗。")
-                    # 重新拋出錯誤，讓外層的 try...except 捕捉
                     raise chat_api_e 
         
+        # --- ★ (新功能) 圖像生成邏輯 ★ ---
+        # 檢查 AI 的回應中是否有 `{draw:...}` 標籤
+        if "{draw:" in final_response_text and not generated_image_in_this_session:
+            start_index = final_response_text.find("{draw:")
+            end_index = final_response_text.find("}", start_index)
+            
+            if start_index != -1 and end_index != -1:
+                draw_command = final_response_text[start_index + len("{draw:"):end_index].strip()
+                
+                # 從回應中移除 `{draw:...}` 標籤，讓文字更乾淨
+                final_response_text_without_draw = final_response_text.replace(final_response_text[start_index:end_index+1], "").strip()
+                
+                print(f"--- (繪圖魔法) AI 宗師請求繪圖：'{draw_command}' ---")
+                try:
+                    # 使用 Gemini 進行圖像生成
+                    image_gen_response = client.models.generate_content(
+                        model="gemini-1.5-flash", # 使用一個更輕量的模型來生成圖片，速度較快
+                        contents=[f"請生成一張關於'{draw_command}'的物理教學示意圖。風格簡潔、清晰、易於理解，適合高中生。"]
+                    )
+                    
+                    if image_gen_response.candidates and image_gen_response.candidates[0].content.parts:
+                        # 找到圖片內容
+                        image_part = None
+                        for part in image_gen_response.candidates[0].content.parts:
+                            if part.inline_data and part.inline_data.mime_type.startswith('image/'):
+                                image_part = part
+                                break
+
+                        if image_part:
+                            image_data = image_part.inline_data.data
+                            image_mime_type = image_part.inline_data.mime_type
+                            
+                            # 將圖片上傳到 Cloudinary
+                            print("--- (繪圖魔法) 正在上傳生成的圖片到 Cloudinary... ---")
+                            upload_gen_image_result = cloudinary.uploader.upload(
+                                io.BytesIO(image_data),
+                                resource_type="image",
+                                folder="ai_guru_generated_images" # 儲存到特定資料夾
+                            )
+                            generated_image_url = upload_gen_image_result.get('secure_url')
+                            
+                            if generated_image_url:
+                                print(f"--- (繪圖魔法) 圖片生成並上傳成功！URL: {generated_image_image_url} ---")
+                                # 將圖片訊息加入回覆列表
+                                line_replies.append(ImageSendMessage(
+                                    original_content_url=generated_image_url,
+                                    preview_image_url=generated_image_url
+                                ))
+                                generated_image_in_this_session = True # 標記已生成圖片
+                                image_url_to_save = generated_image_url # 更新日誌中的圖片URL
+                            else:
+                                print("!!! 錯誤：生成的圖片上傳 Cloudinary 失敗。")
+                                line_replies.append(TextSendMessage(text="宗師試圖畫一張圖，但目前畫不出來。"))
+                        else:
+                            print("!!! 錯誤：Gemini 生成的內容中沒有圖片部分。")
+                            line_replies.append(TextSendMessage(text="宗師試圖畫一張圖，但目前畫不出來。"))
+                    else:
+                        print("!!! 錯誤：Gemini 圖像生成回應為空。")
+                        line_replies.append(TextSendMessage(text="宗師試圖畫一張圖，但目前畫不出來。"))
+                
+                except Exception as gen_image_e:
+                    print(f"!!! 嚴重錯誤：圖像生成或上傳失敗。錯誤：{gen_image_e}")
+                    line_replies.append(TextSendMessage(text="宗師試圖畫一張圖，但目前遇到了一些困難。"))
+
+                # 將處理後的文字回應加入回覆列表
+                if final_response_text_without_draw:
+                    line_replies.append(TextSendMessage(text=final_response_text_without_draw.replace('\x00', '')))
+                
+            else: # 標籤不完整，當成普通文字處理
+                line_replies.append(TextSendMessage(text=final_response_text.replace('\x00', '')))
+
+        else: # 沒有 {draw:...} 標籤，或已經生成過圖片，當成普通文字處理
+            line_replies.append(TextSendMessage(text=final_response_text.replace('\x00', '')))
+        
+        final_text = final_response_text # 儲存到日誌時使用原始回應
+
         # 5. 儲存「更新後的記憶」(AI 記憶)
         print(f"--- (記憶) 正在儲存 user_id '{user_id}' 的對話紀錄... ---")
         save_chat_history(user_id, chat_session)
         print(f"--- (記憶) 對話紀錄儲存成功 ---")
 
     except Exception as e:
-        # ★ (這是外層的 except) 如果重試 2 次後還是失敗，就會跑到這裡
-        print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG/視覺/聽覺操作失敗。錯誤：{e}")
+        print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG/視覺/聽覺/繪圖操作失敗。錯誤：{e}")
         final_text = "抱歉，宗師目前正在檢索記憶/教科書或冥想中，請稍後再試。"
         if not user_content: user_content = "Error during processing"
         if not user_message_type: user_message_type = "error"
+        line_replies = [TextSendMessage(text=final_text)] # 確保有錯誤訊息回覆
 
     # ★★★【第八紀元：最終儲存】★★★
     # 6. 儲存「研究日誌」(人類研究)
     
-    # ★ (新功能) 現在會同時儲存到 Neon 和 Google Sheets ★
     save_to_research_log(
         user_id=user_id.replace('\x00', ''),
         user_msg_type=user_message_type.replace('\x00', ''),
         user_content=user_content.replace('\x00', ''),
         image_url=image_url_to_save.replace('\x00', ''), 
-        vision_analysis=vision_analysis.replace('\x00', ''), # ★ (重要) 聽覺和視覺分析都會存到這裡
+        vision_analysis=vision_analysis.replace('\x00', ''), 
         rag_context=rag_context.replace('\x00', ''),
         ai_response=final_text.replace('\x00', '')
     )
@@ -570,12 +660,10 @@ def handle_message(event):
     # 7. 回覆使用者
     line_bot_api.reply_message(
         event.reply_token, 
-        TextSendMessage(text=final_text.replace('\x00', '')) 
+        line_replies # ★ 現在可以傳送多個訊息 (圖片 + 文字) ★
     )
 
 # --- 步驟十：啟動「神殿」 ---
 if __name__ == "__main__":
-    # ★ 修正：從 gunicorn 接收 PORT
     port = int(os.environ.get('PORT', 8080))
-    # ★ 修正：移除 debug=True，由 gunicorn 控制
     app.run(host='0.0.0.0', port=port)
