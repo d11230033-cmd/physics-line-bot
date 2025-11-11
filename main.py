@@ -571,7 +571,7 @@ def handle_message(event):
                 try:
                     # 使用 Gemini 進行圖像生成
                     image_gen_response = client.models.generate_content(
-                        model="gemini-1.5-flash", # 使用一個更輕量的模型來生成圖片，速度較快
+                        model="gemini-2.5-flash-image", # 使用一個更輕量的模型來生成圖片，速度較快
                         contents=[f"請生成一張關於'{draw_command}'的物理教學示意圖。風格簡潔、清晰、易於理解，適合高中生。"]
                     )
                     
