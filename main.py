@@ -4,8 +4,8 @@
 # 模型：★「專家一」 gemini-2.5-pro (對話) ★
 # 模型：★「專家二」 gemini-2.5-flash-image (視覺) ★
 # ... (之前的所有修正)
-# 修正：9. ★ (Prompt) 絕對禁止使用「簡體中文」，強制使用「繁體中文」 ★
 # 修正：10. ★ (Prompt) 新增「重點筆記整理」功能 (在類題確認之前) ★
+# 修正：11. ★ (新功能) 新增「Google Sheets 試算表」日誌記錄 ★
 # -----------------------------------
 
 import os
@@ -34,6 +34,10 @@ import cloudinary.api
 
 # --- ★ 第五紀元：向量 RAG 工具 ★ ---
 from pgvector.psycopg2 import register_vector
+
+# --- ★ (新功能) Google Sheets 工具 ★ ---
+import gspread
+from google.oauth2.service_account import Credentials
 
 # --- 步驟一：神殿的鑰匙 (從 Render.com 讀取) ---
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
@@ -66,6 +70,30 @@ try:
     print("--- (Cloudinary) 永恆檔案館連接成功！ ---")
 except Exception as e:
     print(f"!!! 嚴重錯誤：無法連接到 Cloudinary。錯誤：{e}")
+
+# --- ★ (新功能) 連接 Google Sheets ★ ---
+try:
+    # 1. 定義 API 範圍
+    SCOPES = [
+        'https://www.googleapis.com/auth/spreadsheets',
+        'https://www.googleapis.com/auth/drive.file'
+    ]
+    # 2. 讀取 Render 上的 Secret File ('service_account.json')
+    CREDS = Credentials.from_service_account_file('service_account.json', scopes=SCOPES)
+    gc = gspread.authorize(CREDS)
+    
+    # 3. ★★★ (請修改) 開啟您的 Google Sheet (請用您在步驟1中建立的「檔案名稱」) ★★★
+    SHEET_FILE_NAME = "JYM物理AI助教_聊天日誌" # (請確認這個名稱與您的試算表檔案名稱 100% 一致)
+    
+    sh = gc.open(SHEET_FILE_NAME)
+    
+    # 4. 取得第一個工作表分頁 (名稱 "工作表1" 或 "Sheet1")
+    worksheet = sh.get_worksheet(0) 
+    
+    print(f"--- (Google Sheets) 連接成功！已開啟檔案 '{SHEET_FILE_NAME}' ---")
+except Exception as e:
+    print(f"!!! 嚴重錯誤：無法連接到 Google Sheets。錯誤：{e}")
+    worksheet = None # 連接失敗
 
 # --- ★ 第十五紀元：定義「雙重專家」模型 ★ ---
 CHAT_MODEL = 'gemini-2.5-pro'           # ★ 專家一：複雜推理
@@ -329,12 +357,14 @@ def find_relevant_chunks(query_text, k=3):
         if conn:
             conn.close()
 
-# 函數：儲存「研究日誌」(★ 無需變更 ★)
+# --- ★ (新功能) 函數：儲存「研究日誌」(★ 升級版：同時寫入 Google Sheets ★) ---
 def save_to_research_log(user_id, user_msg_type, user_content, image_url, vision_analysis, rag_context, ai_response):
+    
+    # --- 步驟 A：(不變) 儲存到 Neon 資料庫 ---
     conn = get_db_connection()
     if conn:
         try:
-            print(f"--- (研究日誌) 正在儲存 user_id '{user_id}' 的完整互動... ---")
+            print(f"--- (研究日誌) 正在儲存 user_id '{user_id}' 的完整互動 (to Neon)... ---")
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO research_log 
@@ -342,11 +372,38 @@ def save_to_research_log(user_id, user_msg_type, user_content, image_url, vision
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """, (user_id, user_msg_type, user_content, image_url, vision_analysis, rag_context, ai_response))
                 conn.commit()
-            print("--- (研究日誌) 儲存成功 ---")
+            print("--- (研究日誌) 儲存到 Neon 成功 ---")
         except Exception as e:
-            print(f"!!! 錯誤：無法儲存「研究日誌」。錯誤：{e}")
+            print(f"!!! 錯誤：無法儲存「研究日誌」到 Neon。錯誤：{e}")
         finally:
             conn.close()
+
+    # --- 步驟 B：(新功能) 儲存到 Google Sheets ---
+    if worksheet: # 檢查 worksheet (在程式頂端) 是否在啟動時成功初始化
+        try:
+            print(f"--- (Google Sheets) 正在新增一列紀錄... ---")
+            
+            # 準備要新增的「一整列」資料
+            # (我們加入 'datetime' 來產生時間戳)
+            now_utc = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+            
+            row_data = [
+                now_utc,
+                user_id,
+                user_msg_type,
+                user_content,
+                image_url,
+                vision_analysis,
+                rag_context,
+                ai_response
+            ]
+            
+            # 新增一列到工作表
+            worksheet.append_row(row_data)
+            
+            print(f"--- (Google Sheets) 新增一列成功 ---")
+        except Exception as e:
+            print(f"!!! 嚴重錯誤：無法寫入 Google Sheets。錯誤：{e}")
 
 initialize_database()
 
@@ -532,6 +589,7 @@ def handle_message(event):
     # 6. 儲存「研究日誌」(人類研究)
     
     # ★ 修正：在儲存前，清理所有字串中的 NUL (0x00) 字元 ★
+    # ★ (新功能) 這裡的變數會被傳遞到 新的 save_to_research_log 函式
     save_to_research_log(
         user_id=user_id.replace('\x00', ''),
         user_msg_type=user_message_type.replace('\x00', ''),
