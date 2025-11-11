@@ -2,8 +2,8 @@
 #
 # SDK：★「全新」 google-genai (PS5 SDK) ★
 # ... (之前的所有修正)
-# 修正：13. ★ (新功能) 新增「聽覺專家」，支援 LINE 錄音 (AudioMessage) ★
 # 修正：14. ★ (新功能) AI 宗師可以「繪製圖片」並回傳給學生 ★
+# 修正：15. ★ (GSheets Bug) 改用 SPREADSHEET_KEY (金鑰) 開啟，修復 <Response [200]> 錯誤 ★
 # -----------------------------------
 
 import os
@@ -72,7 +72,7 @@ except Exception as e:
     print(f"!!! 嚴重錯誤：無法連接到 Cloudinary。錯誤：{e}")
 
 
-# --- ★ (新功能) 連接 Google Sheets ★ ---
+# --- ★ (新功能) 連接 Google Sheets (★ 修正版：使用 KEY ★) ---
 try:
     # 1. 定義 API 範圍
     SCOPES = [
@@ -83,17 +83,19 @@ try:
     CREDS = Credentials.from_service_account_file('service_account.json', scopes=SCOPES)
     gc = gspread.authorize(CREDS)
     
-    # 3. ★★★ (請修改) 開啟您的 Google Sheet (請用您在步驟1中建立的「檔案名稱」) ★★★
-    SHEET_FILE_NAME = "AI_宗師_聊天日誌" # (請確認這個名稱與您的試算表檔案名稱 100% 一致)
+    # 3. ★★★ (新修正 + 請修改) 使用您試算表的「金鑰 (Key)」 ★★★
+    # (請貼上您在「步驟一」從網址列複製的那串金鑰)
+    SPREADSHEET_KEY = "1Evd8WACx_uDUl04c5x2jADFxgLl1A3jW2z0_RynTmhU"
     
-    sh = gc.open(SHEET_FILE_NAME)
+    sh = gc.open_by_key(SPREADSHEET_KEY)
     
     # 4. 取得第一個工作表分頁 (名稱 "工作表1" 或 "Sheet1")
     worksheet = sh.get_worksheet(0) 
     
-    print(f"--- (Google Sheets) 連接成功！已開啟檔案 '{SHEET_FILE_NAME}' ---")
+    print(f"--- (Google Sheets) 連接成功！已透過 KEY 開啟試算表 ---")
 except Exception as e:
     print(f"!!! 嚴重錯誤：無法連接到 Google Sheets。錯誤：{e}")
+    print("    (★ 提醒：請再次確認您已將 'service_account.json' 中的 'client_email' 共用給此試算表，並設為「編輯者」 ★)")
     worksheet = None # 連接失敗
 
 # --- ★ 第十五紀元：定義「雙重專家」模型 ★ ---
@@ -460,7 +462,7 @@ def handle_message(event):
                 model=VISION_MODEL, 
                 contents=[img, vision_prompt] 
             )
-            vision_analysis = vision_response.text 
+            vision_analysis = vision_response.text # ★ 存入共用變數
             print(f"--- (視覺專家) 分析完畢：{vision_analysis[:70]}... ---")
 
             user_question = f"圖片內容分析：『{vision_analysis}』。請基於這個分析，開始用蘇格拉底式教學法引導我。"
@@ -469,7 +471,7 @@ def handle_message(event):
             # --- ★ (新功能) 專家二：「聽覺專家」啟動 ★ ---
             user_message_type = "audio"
             user_content = f"Audio received (Message ID: {event.message.id})" 
-            image_url_to_save = "N/A (Audio Message)" 
+            image_url_to_save = "N/A (Audio Message)" # 聲音訊息沒有圖片 URL
 
             print(f"--- (聽覺專家) 收到來自 user_id '{user_id}' 的錄音，開始分析... ---")
             message_content = line_bot_api.get_message_content(event.message.id)
@@ -484,7 +486,7 @@ def handle_message(event):
             * 「絕對禁止」你「自己」去「回答」錄音中的物理問題。
             你的「工作流程」是：
             1.  **「逐字稿」**：100% 精確地聽打出學生說的「每一句話」(使用繁體中文)。
-            2.  **「語氣分析」**：客觀地描述學生的「情緒或語氣」(例如：聽起來很困惑、不確定、沮喪、有自信等)。
+            2.  **「語氣分析」**：客觀地描述學生的「情緒或語氣」(例如：聽起來很困惑、不確定、沮-喪、有自信等)。
             請「只」回傳這兩項分析，不要有多餘的對話。
             例如：
             「
@@ -498,7 +500,7 @@ def handle_message(event):
                 contents=[audio_file, audio_prompt]
             )
             
-            vision_analysis = speech_response.text 
+            vision_analysis = speech_response.text # ★ 存入共用變數 (vision_analysis)
             print(f"--- (聽覺專家) 分析完畢：{vision_analysis[:70]}... ---")
 
             user_question = f"錄音內容分析：『{vision_analysis}』。請基於這個分析，開始用蘇格拉底式教學法引導我。"
@@ -557,15 +559,12 @@ def handle_message(event):
                     raise chat_api_e 
         
         # --- ★ (新功能) 圖像生成邏輯 ★ ---
-        # 檢查 AI 的回應中是否有 `{draw:...}` 標籤
         if "{draw:" in final_response_text and not generated_image_in_this_session:
             start_index = final_response_text.find("{draw:")
             end_index = final_response_text.find("}", start_index)
             
             if start_index != -1 and end_index != -1:
                 draw_command = final_response_text[start_index + len("{draw:"):end_index].strip()
-                
-                # 從回應中移除 `{draw:...}` 標籤，讓文字更乾淨
                 final_response_text_without_draw = final_response_text.replace(final_response_text[start_index:end_index+1], "").strip()
                 
                 print(f"--- (繪圖魔法) AI 宗師請求繪圖：'{draw_command}' ---")
@@ -577,7 +576,6 @@ def handle_message(event):
                     )
                     
                     if image_gen_response.candidates and image_gen_response.candidates[0].content.parts:
-                        # 找到圖片內容
                         image_part = None
                         for part in image_gen_response.candidates[0].content.parts:
                             if part.inline_data and part.inline_data.mime_type.startswith('image/'):
@@ -588,7 +586,6 @@ def handle_message(event):
                             image_data = image_part.inline_data.data
                             image_mime_type = image_part.inline_data.mime_type
                             
-                            # 將圖片上傳到 Cloudinary
                             print("--- (繪圖魔法) 正在上傳生成的圖片到 Cloudinary... ---")
                             upload_gen_image_result = cloudinary.uploader.upload(
                                 io.BytesIO(image_data),
@@ -598,13 +595,12 @@ def handle_message(event):
                             generated_image_url = upload_gen_image_result.get('secure_url')
                             
                             if generated_image_url:
-                                print(f"--- (繪圖魔法) 圖片生成並上傳成功！URL: {generated_image_image_url} ---")
-                                # 將圖片訊息加入回覆列表
+                                print(f"--- (繪圖魔法) 圖片生成並上傳成功！URL: {generated_image_url} ---")
                                 line_replies.append(ImageSendMessage(
                                     original_content_url=generated_image_url,
                                     preview_image_url=generated_image_url
                                 ))
-                                generated_image_in_this_session = True # 標記已生成圖片
+                                generated_image_in_this_session = True 
                                 image_url_to_save = generated_image_url # 更新日誌中的圖片URL
                             else:
                                 print("!!! 錯誤：生成的圖片上傳 Cloudinary 失敗。")
@@ -620,14 +616,12 @@ def handle_message(event):
                     print(f"!!! 嚴重錯誤：圖像生成或上傳失敗。錯誤：{gen_image_e}")
                     line_replies.append(TextSendMessage(text="宗師試圖畫一張圖，但目前遇到了一些困難。"))
 
-                # 將處理後的文字回應加入回覆列表
                 if final_response_text_without_draw:
                     line_replies.append(TextSendMessage(text=final_response_text_without_draw.replace('\x00', '')))
                 
-            else: # 標籤不完整，當成普通文字處理
+            else: 
                 line_replies.append(TextSendMessage(text=final_response_text.replace('\x00', '')))
-
-        else: # 沒有 {draw:...} 標籤，或已經生成過圖片，當成普通文字處理
+        else: 
             line_replies.append(TextSendMessage(text=final_response_text.replace('\x00', '')))
         
         final_text = final_response_text # 儲存到日誌時使用原始回應
