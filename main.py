@@ -3,12 +3,8 @@
 # SDK：★「全新」 google-genai (PS5 SDK) ★
 # 模型：★「專家一」 gemini-2.5-pro (對話) ★
 # 模型：★「專家二」 gemini-2.5-flash-image (視覺) ★
-# 修正：1. Python 3.11 / WEB_CONCURRENCY=1 (在 Render 設定)
-# 修正：2. ★ 第十三紀元：Socratic Evaluator (精準視覺) ★
-# 修正：3. ★ 第十六紀元：修正「三大 Syntax 幽靈」 ★
-# 修正：4. ★ (Gemini) 修正 RAG 搜尋的 'result.embedding' 語法錯誤 ★
-# 修正：5. ★ (Postgres) 修正 NUL (0x00) 字元寫入資料庫的錯誤 ★
-# 修正：6. ★ (LineBot) 修正 'SendMessage' 的 NameError 錯字 ★
+# ... (之前的所有修正)
+# 修正：7. ★ (Gemini) 新增「聊天 API」的自動重試 (解決 500 INTERNAL 錯誤) ★
 # -----------------------------------
 
 import os
@@ -16,13 +12,11 @@ import pathlib
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-# ★ 修正：我們需要 'TextSendMessage'
 from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMessage
 
 # --- ★ 第十四紀元：全新 SDK ★ ---
 from google import genai
 from google.genai import types
-# from google.genai.types import content_types # <-- ★ 第十五紀元 Bug：已移除 ★
 from google.genai.types import HarmCategory, HarmBlockThreshold
 
 from PIL import Image
@@ -30,6 +24,7 @@ import io
 import psycopg2 # 藍圖三：資料庫工具
 import json     # 藍圖三：資料庫工具
 import datetime # ★ 第七紀元：需要時間戳
+import time     # ★ (新功能) 為了「自動重試」
 
 # --- ★ 第八紀元：永恆檔案館工具 ★ ---
 import cloudinary
@@ -42,10 +37,7 @@ from pgvector.psycopg2 import register_vector
 # --- 步驟一：神殿的鑰匙 (從 Render.com 讀取) ---
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
-# ★ 第十四紀元：金鑰名稱已在 Render 改為 GEMINI_API_KEY ★
 DATABASE_URL = os.environ.get('DATABASE_URL')
-
-# ★ 第八紀元：檔案館金鑰 ★
 CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME')
 CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY')
 CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET')
@@ -56,7 +48,6 @@ line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # --- ★ 第十四紀元：連接「神之鍛造廠」(Gemini PS5) ★ ---
-# (金鑰「GEMINI_API_KEY」將自動從 Render 環境變數讀取)
 try:
     client = genai.Client()
     print("--- (Gemini) ★ 第十四紀元：PS5 SDK (google-genai) 連接成功！ ★ ---")
@@ -136,7 +127,6 @@ system_prompt = """
 """
 
 # --- ★ 第十四紀元：定義「PS5」的「設定」 ★ ---
-# (這是「對話宗師」 (gemini-2.5-pro) 的專用設定)
 generation_config = types.GenerateContentConfig(
     system_instruction=system_prompt,
     safety_settings=[
@@ -481,30 +471,51 @@ def handle_message(event):
         # ★ 第十二紀元：修改 RAG 提示詞 (中文版) ★
         rag_prompt = f"""
         ---「相關段落」開始---
-        {rag_context}
+        {rag_content}
         ---「相關段落」結束---
 
         學生的「原始輸入」(可能是「指令」或「回答」)：「{user_question}」
 
         (請你「嚴格遵守」 System Prompt 中的「第十二紀元：中文指令」核心邏輯！
         1.  「首先」檢查「原始輸入」是否為「一個指令」(例如：教我物理觀念)。如果是，請「立刻執行指令」。
-        2.  「如果不是」指令，才「接著」使用「相關段落」和「評估者邏輯」來回應。)
+        2.  「如果不是」指令，才「接著」使用「相關段落」和「評估者 logique」來回應。)
         """
         contents_to_send = [rag_prompt] # ★「PS5」的語法
 
-        # --- ★ 專家一：「對話宗師」啟動 (第十七紀元：修正幽靈 C) ★ ---
+        # --- ★ 專家一：「對話宗師」啟動 (★ 第十七紀元：加入自動重試) ★ ---
         print(f"--- (對話宗師) 正在呼叫 Gemini API ({CHAT_MODEL})... ---")
-        # ★ 修正：使用「位置」參數
-        response = chat_session.send_message(contents_to_send)
-        final_text = response.text 
-        print(f"--- (對話宗師) Gemini API 回應成功 ---")
+        
+        final_text = ""
+        max_retries = 2 # 嘗試 1 次 + 重試 1 次 = 共 2 次
+        attempt = 0
+        
+        while attempt < max_retries:
+            try:
+                # 嘗試呼叫 API
+                response = chat_session.send_message(contents_to_send)
+                final_text = response.text
+                print(f"--- (對話宗師) Gemini API 回應成功 (嘗試第 {attempt + 1} 次) ---")
+                break # 成功！跳出重試迴圈
 
+            except Exception as chat_api_e:
+                attempt += 1
+                print(f"!!! (對話宗師) 警告：API 呼叫失敗 (第 {attempt} 次)。錯誤：{chat_api_e}")
+                
+                if attempt < max_retries:
+                    print(f"    ... 正在重試，等待 2 秒...")
+                    time.sleep(2) # 等待 2 秒
+                else:
+                    print(f"!!! (對話宗師) 嚴重錯誤：重試 {max_retries} 次後仍然失敗。")
+                    # 重新拋出錯誤，讓外層的 try...except 捕捉
+                    raise chat_api_e 
+        
         # 5. 儲存「更新後的記憶」(AI 記憶)
         print(f"--- (記憶) 正在儲存 user_id '{user_id}' 的對話紀錄... ---")
         save_chat_history(user_id, chat_session)
         print(f"--- (記憶) 對話紀錄儲存成功 ---")
 
     except Exception as e:
+        # ★ (這是外層的 except) 如果重試 2 次後還是失敗，就會跑到這裡
         print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG/視覺操作失敗。錯誤：{e}")
         final_text = "抱歉，宗師目前正在檢索記憶/教科書或冥想中，請稍後再試。"
         if not user_content: user_content = "Error during processing"
