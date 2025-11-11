@@ -1,9 +1,10 @@
-# --- 「神殿」：AI 宗師的核心 (第十八紀元：最終繪圖版) ---
+# --- 「神殿」：AI 宗師的核心 (第二十紀元：最終語音版) ---
 #
 # SDK：★「全新」 google-genai (PS5 SDK) ★
 # ... (之前的所有修正)
-# 修正：14. ★ (新功能) AI 宗師可以「繪製圖片」並回傳給學生 ★
-# 修正：15. ★ (GSheets Bug) 改用 SPREADSHEET_KEY (金鑰) 開啟，修復 <Response [200]> 錯誤 ★
+# 修正：14. ★ (繪圖復活) 確認 gemini-2.5-flash-image 支援圖像生成 ★
+# 修正：15. ★ (GSheets Bug) 改用 SPREADSHEET_KEY (金鑰) 開啟 ★
+# 修正：16. ★ (新功能) 新增「語音輸出」(TTS)，AI 宗師會「說話」了 ★
 # -----------------------------------
 
 import os
@@ -11,7 +12,8 @@ import pathlib
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, ImageMessage, AudioMessage, TextSendMessage, ImageSendMessage
+# ★ (新功能) 引入 AudioSendMessage
+from linebot.models import MessageEvent, TextMessage, ImageMessage, AudioMessage, TextSendMessage, ImageSendMessage 
 
 # --- ★ 第十四紀元：全新 SDK ★ ---
 from google import genai
@@ -36,6 +38,9 @@ from pgvector.psycopg2 import register_vector
 # --- ★ (新功能) Google Sheets 工具 ★ ---
 import gspread
 from google.oauth2.service_account import Credentials
+
+# --- ★ (新功能) Google TTS (語音合成) 工具 ★ ---
+from google.cloud import texttospeech
 
 # --- 步驟一：神殿的鑰匙 (從 Render.com 讀取) ---
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
@@ -72,7 +77,7 @@ except Exception as e:
     print(f"!!! 嚴重錯誤：無法連接到 Cloudinary。錯誤：{e}")
 
 
-# --- ★ (新功能) 連接 Google Sheets (★ 修正版：使用 KEY ★) ---
+# --- ★ (新功能) 連接 Google Sheets & TTS ★ ---
 try:
     # 1. 定義 API 範圍
     SCOPES = [
@@ -85,7 +90,7 @@ try:
     
     # 3. ★★★ (新修正 + 請修改) 使用您試算表的「金鑰 (Key)」 ★★★
     # (請貼上您在「步驟一」從網址列複製的那串金鑰)
-    SPREADSHEET_KEY = "1Evd8WACx_uDUl04c5x2jADFxgLl1A3jW2z0_RynTmhU"
+    SPREADSHEET_KEY = "Y1Evd8WACx_uDUl04c5x2jADFxgLl1A3jW2z0_RynTmhU" # ★★★ 在這裡貼上您的 KEY ★★★
     
     sh = gc.open_by_key(SPREADSHEET_KEY)
     
@@ -98,13 +103,23 @@ except Exception as e:
     print("    (★ 提醒：請再次確認您已將 'service_account.json' 中的 'client_email' 共用給此試算表，並設為「編輯者」 ★)")
     worksheet = None # 連接失敗
 
-# --- ★ 第十五紀元：定義「雙重專家」模型 ★ ---
-CHAT_MODEL = 'gemini-2.5-pro'           # ★ 專家一：複雜推理、★ (新) 聽覺、★ (新) 繪圖控制 ★
+# --- ★ (新功能) 連接 Google Text-to-Speech (TTS) ★ ---
+try:
+    # (我們使用與 Google Sheets 相同的 'service_account.json' 金鑰)
+    TTS_CLIENT = texttospeech.TextToSpeechClient(credentials=CREDS)
+    print("--- (Google TTS) 語音合成服務連接成功！ ---")
+except Exception as e:
+    print(f"!!! 嚴重錯誤：無法連接到 Google TTS。錯誤：{e}")
+    TTS_CLIENT = None
+
+# --- ★ 第十五紀元：定義「雙重專家」模型 (★ 繪圖模型修正為 gemini-2.5-flash-image) ★ ---
+CHAT_MODEL = 'gemini-2.5-pro'           # ★ 專家一：複雜推理、★ (新) 聽覺
 VISION_MODEL = 'gemini-2.5-flash-image'  # ★ 專家二：影像分析
+IMAGE_GEN_MODEL = 'gemini-2.5-flash-image' # ★ (繪圖復活) 現在它也可以繪圖了！
 EMBEDDING_MODEL = 'models/text-embedding-004' # (保持不變，這是標準)
 VECTOR_DIMENSION = 768 # ★ 向量維度 768
 
-# --- 步驟四：AI 宗師的「靈魂」核心 (★ 新增繪圖指令 ★) ---
+# --- 步驟四：AI 宗師的「靈魂」核心 (★ 重新啟用繪圖指令 ★) ---
 system_prompt = """
 你是一位頂尖的台灣高中物理教學AI，叫做「AI 宗師」。
 你的教學風格是「蘇格拉底式評估法」(Socratic Evaluator)。
@@ -120,7 +135,7 @@ system_prompt = """
 4.  **「絕對禁止」** 說出「答案是...」或「你應該要...」。
 5.  **「絕對必須」**：你「所有」的回應「必須」 100% 使用「繁體中文」(台灣用語)。「絕對禁止」使用「簡體中文」。
 
-# --- ★ 「繪圖魔法」指令 (第十四紀元：新功能) ★ ---
+# --- ★ 「繪圖魔法」指令 (第十九紀元：繪圖復活) ★ ---
 * **你可以生成圖片。** 當你判斷「一張圖」會比「純文字」更能幫助學生理解**物理概念、力圖、運動軌跡、光學路徑、電路圖、圖表關係或任何幾何概念**時，你「必須」在回應中**「使用圖像生成標籤」**。
 * **生成圖片的格式：** 在你希望生成圖片的地方，插入這個標籤：`{draw:<圖片的詳細描述>}`。
 * **範例：**
@@ -359,6 +374,60 @@ def save_to_research_log(user_id, user_msg_type, user_content, image_url, vision
         except Exception as e:
             print(f"!!! 嚴重錯誤：無法寫入 Google Sheets。錯誤：{e}")
 
+
+# --- ★ (新功能) 函數：產生語音 (TTS) 並上傳 ★ ---
+def generate_tts_and_upload(text_to_speak):
+    if not TTS_CLIENT:
+        print("!!! (TTS) 錯誤：TTS Client 未初始化。")
+        return None
+    
+    try:
+        print(f"--- (TTS) 正在為「{text_to_speak[:20]}...」合成語音... ---")
+        # 1. 準備 TTS 請求
+        synthesis_input = texttospeech.SynthesisInput(text=text_to_speak)
+        
+        # 2. 選擇語音 (cmn-TW = 台灣中文, Standard-A = 女聲)
+        voice = texttospeech.VoiceSelectionParams(
+            language_code="cmn-TW", 
+            name="cmn-TW-Standard-A"
+        )
+        
+        # 3. 選擇音檔格式 (MP3)
+        audio_config = texttospeech.AudioConfig(
+            audio_encoding=texttospeech.AudioEncoding.MP3
+        )
+        
+        # 4. 呼叫 API
+        response = TTS_CLIENT.synthesize_speech(
+            input=synthesis_input, 
+            voice=voice, 
+            audio_config=audio_config
+        )
+        
+        audio_bytes = response.audio_content
+        print("--- (TTS) 語音合成成功，正在上傳到 Cloudinary... ---")
+        
+        # 5. 上傳到 Cloudinary (MP3 屬於 "raw" 或 "video" 類型)
+        upload_result = cloudinary.uploader.upload(
+            io.BytesIO(audio_bytes),
+            resource_type="raw", # 使用 "raw" 儲存 MP3
+            folder="ai_guru_audio" # 儲存到特定資料夾
+        )
+        
+        secure_url = upload_result.get('secure_url')
+        
+        if secure_url:
+            print(f"--- (TTS) 語音上傳成功！URL: {secure_url} ---")
+            return secure_url
+        else:
+            print("!!! (TTS) 錯誤：Cloudinary 上傳後未回傳 URL。")
+            return None
+            
+    except Exception as e:
+        print(f"!!! 嚴重錯誤：TTS 語音合成或上傳失敗。錯誤：{e}")
+        return None
+
+
 initialize_database()
 
 # --- 步驟八：神殿的「入口」(Webhook) (★ 無需變更 ★) ---
@@ -372,7 +441,7 @@ def callback():
         abort(400)
     return 'OK'
 
-# --- 步驟九：神殿的「主控室」(處理訊息) (★ 升級版：支援 AudioMessage, Image Generation ★) ---
+# --- 步驟九：神殿的「主控室」(處理訊息) (★ 升級版：支援 聽覺, 繪圖, 語音 ★) ---
 @handler.add(MessageEvent, message=(TextMessage, ImageMessage, AudioMessage)) # ★ 支援 AudioMessage ★
 def handle_message(event):
 
@@ -389,10 +458,10 @@ def handle_message(event):
     image_url_to_save = "" 
     vision_analysis = "" 
     rag_context = "" 
-    final_text = "" 
     
-    # ★ (新功能) 判斷是否已經生成過圖片，避免重複生成 ★
-    generated_image_in_this_session = False 
+    # ★ (修正版) 這些變數必須在 try/except 之外初始化
+    final_response_text = "" # AI 的原始文字回應 (用於日誌)
+    line_replies = []        # 準備傳送給 LINE 的訊息列表
     
     # 1. 讀取「過去的記憶」
     past_history = get_chat_history(user_id)
@@ -411,7 +480,8 @@ def handle_message(event):
     # 3. 準備「當前的輸入」(★ 三位一體專家系統 ★)
     contents_to_send = []
     user_question = "" 
-
+    
+    # ★ (修正) 重構 try/except 結構，確保錯誤時也能儲存日誌 ★
     try:
         if isinstance(event.message, ImageMessage):
             # --- ★ 專家一：「視覺專家」啟動 ★ ---
@@ -533,17 +603,13 @@ def handle_message(event):
         # --- ★ AI 宗師：「對話宗師」啟動 (★ 第十七紀元：加入自動重試) ★ ---
         print(f"--- (對話宗師) 正在呼叫 Gemini API ({CHAT_MODEL})... ---")
         
-        # ★ (新功能) 準備存放 LINE 回覆的列表 ★
-        line_replies = []
-        
-        final_response_text = ""
         max_retries = 2 
         attempt = 0
         
         while attempt < max_retries:
             try:
                 response = chat_session.send_message(contents_to_send)
-                final_response_text = response.text
+                final_response_text = response.text # ★ (修正) AI 的原始回應
                 print(f"--- (對話宗師) Gemini API 回應成功 (嘗試第 {attempt + 1} 次) ---")
                 break 
 
@@ -558,7 +624,7 @@ def handle_message(event):
                     print(f"!!! (對話宗師) 嚴重錯誤：重試 {max_retries} 次後仍然失敗。")
                     raise chat_api_e 
         
-        # --- ★ (新功能) 圖像生成邏輯 ★ ---
+        # --- ★ (新功能) 圖像生成邏輯 (★ 修正版：使用 gemini-2.5-flash-image ★) ---
         if "{draw:" in final_response_text and not generated_image_in_this_session:
             start_index = final_response_text.find("{draw:")
             end_index = final_response_text.find("}", start_index)
@@ -567,71 +633,76 @@ def handle_message(event):
                 draw_command = final_response_text[start_index + len("{draw:"):end_index].strip()
                 final_response_text_without_draw = final_response_text.replace(final_response_text[start_index:end_index+1], "").strip()
                 
-                print(f"--- (繪圖魔法) AI 宗師請求繪圖：'{draw_command}' ---")
+                print(f"--- (繪圖魔法) AI 宗師請求繪圖：'{draw_command}' (使用 {IMAGE_GEN_MODEL}) ---")
                 try:
-                    # 使用 Gemini 進行圖像生成
+                    # ★ (修正) 使用 client.models.generate_content (因為 gemini-2.5-flash-image 是多模態模型)
                     image_gen_response = client.models.generate_content(
-                        model="gemini-2.5-flash-image", # 使用一個更輕量的模型來生成圖片，速度較快
-                        contents=[f"請生成一張關於'{draw_command}'的物理教學示意圖。風格簡潔、清晰、易於理解，適合高中生。"]
+                        model=IMAGE_GEN_MODEL, 
+                        contents=[f"請生成一張關於'{draw_command}'的物理教學示意圖。風格簡潔、清晰、易於理解，適合高中生。繁體中文。"]
                     )
                     
-                    if image_gen_response.candidates and image_gen_response.candidates[0].content.parts:
-                        image_part = None
-                        for part in image_gen_response.candidates[0].content.parts:
-                            if part.inline_data and part.inline_data.mime_type.startswith('image/'):
-                                image_part = part
-                                break
-
-                        if image_part:
-                            image_data = image_part.inline_data.data
-                            image_mime_type = image_part.inline_data.mime_type
-                            
-                            print("--- (繪圖魔法) 正在上傳生成的圖片到 Cloudinary... ---")
-                            upload_gen_image_result = cloudinary.uploader.upload(
-                                io.BytesIO(image_data),
-                                resource_type="image",
-                                folder="ai_guru_generated_images" # 儲存到特定資料夾
-                            )
-                            generated_image_url = upload_gen_image_result.get('secure_url')
-                            
-                            if generated_image_url:
-                                print(f"--- (繪圖魔法) 圖片生成並上傳成功！URL: {generated_image_url} ---")
-                                line_replies.append(ImageSendMessage(
-                                    original_content_url=generated_image_url,
-                                    preview_image_url=generated_image_url
-                                ))
-                                generated_image_in_this_session = True 
-                                image_url_to_save = generated_image_url # 更新日誌中的圖片URL
-                            else:
-                                print("!!! 錯誤：生成的圖片上傳 Cloudinary 失敗。")
-                                line_replies.append(TextSendMessage(text="宗師試圖畫一張圖，但目前畫不出來。"))
+                    if image_gen_response.parts and image_gen_response.parts[0].mime_type.startswith('image/'):
+                        image_data = image_gen_response.parts[0].data 
+                        
+                        print("--- (繪圖魔法) 正在上傳生成的圖片到 Cloudinary... ---")
+                        upload_gen_image_result = cloudinary.uploader.upload(
+                            io.BytesIO(image_data),
+                            resource_type="image",
+                            folder="ai_guru_generated_images" 
+                        )
+                        generated_image_url = upload_gen_image_result.get('secure_url')
+                        
+                        if generated_image_url:
+                            print(f"--- (繪圖魔法) 圖片生成並上傳成功！URL: {generated_image_url} ---")
+                            line_replies.append(ImageSendMessage(
+                                original_content_url=generated_image_url,
+                                preview_image_url=generated_image_url
+                            ))
+                            generated_image_in_this_session = True 
+                            image_url_to_save = generated_image_url 
                         else:
-                            print("!!! 錯誤：Gemini 生成的內容中沒有圖片部分。")
+                            print("!!! 錯誤：生成的圖片上傳 Cloudinary 失敗。")
                             line_replies.append(TextSendMessage(text="宗師試圖畫一張圖，但目前畫不出來。"))
                     else:
-                        print("!!! 錯誤：Gemini 圖像生成回應為空。")
+                        print("!!! 錯誤：gemini-2.5-flash-image 圖像生成回應為空或不是圖片。")
                         line_replies.append(TextSendMessage(text="宗師試圖畫一張圖，但目前畫不出來。"))
                 
                 except Exception as gen_image_e:
                     print(f"!!! 嚴重錯誤：圖像生成或上傳失敗。錯誤：{gen_image_e}")
                     line_replies.append(TextSendMessage(text="宗師試圖畫一張圖，但目前遇到了一些困難。"))
 
+                # (無論繪圖是否成功) 都加入處理後的文字
                 if final_response_text_without_draw:
                     line_replies.append(TextSendMessage(text=final_response_text_without_draw.replace('\x00', '')))
                 
-            else: 
+            else: # 標籤不完整，當成普通文字處理
                 line_replies.append(TextSendMessage(text=final_response_text.replace('\x00', '')))
-        else: 
+        else: # 沒有 {draw:...} 標籤，或已經生成過圖片，當成普通文字處理
             line_replies.append(TextSendMessage(text=final_response_text.replace('\x00', '')))
         
-        final_text = final_response_text # 儲存到日誌時使用原始回應
-
         # 5. 儲存「更新後的記憶」(AI 記憶)
         print(f"--- (記憶) 正在儲存 user_id '{user_id}' 的對話紀錄... ---")
         save_chat_history(user_id, chat_session)
         print(f"--- (記憶) 對話紀錄儲存成功 ---")
+        
+        # --- ★ (新功能) 語音合成 (TTS) 邏輯 ★ ---
+        # 1. 組合所有要說的文字
+        text_to_speak = "\n".join([msg.text for msg in line_replies if isinstance(msg, TextSendMessage)])
+        
+        # 2. 產生語音並加入回覆列表
+        if text_to_speak and TTS_CLIENT: # 只有在有文字且 TTS 成功初始化時才執行
+            audio_url = generate_tts_and_upload(text_to_speak)
+            if audio_url:
+                # 估算語音長度 (LINE 的必要參數) - (字數 / 180字每分鐘) * 60秒 * 1000毫秒
+                estimated_duration_ms = max(1000, int((len(text_to_speak) / 180) * 60 * 1000))
+                audio_message = AudioSendMessage(
+                    original_content_url=audio_url, 
+                    duration=estimated_duration_ms
+                )
+                line_replies.append(audio_message) # 將語音加到回覆的最後
 
     except Exception as e:
+        # ★ (這是外層的 except) 如果重試 2 次後還是失敗，就會跑到這裡
         print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG/視覺/聽覺/繪圖操作失敗。錯誤：{e}")
         final_text = "抱歉，宗師目前正在檢索記憶/教科書或冥想中，請稍後再試。"
         if not user_content: user_content = "Error during processing"
@@ -648,13 +719,13 @@ def handle_message(event):
         image_url=image_url_to_save.replace('\x00', ''), 
         vision_analysis=vision_analysis.replace('\x00', ''), 
         rag_context=rag_context.replace('\x00', ''),
-        ai_response=final_text.replace('\x00', '')
+        ai_response=final_text.replace('\x00', '') # ★ 儲存 AI 的原始文字回應
     )
 
     # 7. 回覆使用者
     line_bot_api.reply_message(
         event.reply_token, 
-        line_replies # ★ 現在可以傳送多個訊息 (圖片 + 文字) ★
+        line_replies # ★ 現在可以傳送多個訊息 (圖片 + 文字 + 語音) ★
     )
 
 # --- 步驟十：啟動「神殿」 ---
