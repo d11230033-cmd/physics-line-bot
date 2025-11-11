@@ -1,11 +1,8 @@
 # --- 「神殿」：AI 宗師的核心 (第十七紀元：最終語法修正版) ---
 #
 # SDK：★「全新」 google-genai (PS5 SDK) ★
-# 模型：★「專家一」 gemini-2.5-pro (對話) ★
-# 模型：★「專家二」 gemini-2.5-flash-image (視覺) ★
-# ... (之前的所有修正)
-# 修正：10. ★ (Prompt) 新增「重點筆記整理」功能 (在類題確認之前) ★
 # 修正：11. ★ (新功能) 新增「Google Sheets 試算表」日誌記錄 ★
+# 修正：12. ★ (架構還原) 恢復使用「Cloudinary」儲存圖片 (速度最快) ★
 # -----------------------------------
 
 import os
@@ -27,7 +24,7 @@ import json     # 藍圖三：資料庫工具
 import datetime # ★ 第七紀元：需要時間戳
 import time     # ★ (新功能) 為了「自動重試」
 
-# --- ★ 第八紀元：永恆檔案館工具 ★ ---
+# --- ★ (還原) 第八紀元：永恆檔案館工具 ★ ---
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
@@ -43,6 +40,8 @@ from google.oauth2.service_account import Credentials
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 DATABASE_URL = os.environ.get('DATABASE_URL')
+
+# ★ (還原) 第八紀元：檔案館金鑰 ★
 CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME')
 CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY')
 CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET')
@@ -60,7 +59,7 @@ except Exception as e:
     print(f"!!! 嚴重錯誤：無法設定 Google API Key (GEMINI_API_KEY)。錯誤：{e}")
     client = None
 
-# --- ★ 第八紀元：連接「永恆檔案館」(Cloudinary) ★ ---
+# --- ★ (還原) 第八紀元：連接「永恆檔案館」(Cloudinary) ★ ---
 try:
     cloudinary.config( 
         cloud_name = CLOUDINARY_CLOUD_NAME, 
@@ -71,12 +70,13 @@ try:
 except Exception as e:
     print(f"!!! 嚴重錯誤：無法連接到 Cloudinary。錯誤：{e}")
 
+
 # --- ★ (新功能) 連接 Google Sheets ★ ---
 try:
     # 1. 定義 API 範圍
     SCOPES = [
         'https://www.googleapis.com/auth/spreadsheets',
-        'https://www.googleapis.com/auth/drive.file'
+        'https://www.googleapis.com/auth/drive.file' # gspread 需要 drive.file 來「搜尋」檔案
     ]
     # 2. 讀取 Render 上的 Secret File ('service_account.json')
     CREDS = Credentials.from_service_account_file('service_account.json', scopes=SCOPES)
@@ -101,7 +101,7 @@ VISION_MODEL = 'gemini-2.5-flash-image'  # ★ 專家二：影像分析
 EMBEDDING_MODEL = 'models/text-embedding-004' # (保持不變，這是標準)
 VECTOR_DIMENSION = 768 # ★ 向量維度 768
 
-# --- 步驟四：AI 宗師的「靈魂」核心 (★ 第十三紀元：精準視覺 ★) ---
+# --- 步驟四：AI 宗師的「靈魂」核心 (★ 無需變更 ★) ---
 system_prompt = """
 你是一位頂尖的台灣高中物理教學AI，叫做「AI 宗師」。
 你的教學風格是「蘇格拉底式評估法」(Socratic Evaluator)。
@@ -184,6 +184,7 @@ generation_config = types.GenerateContentConfig(
 )
 
 # --- 步驟七：連接「外部大腦」(Neon 資料庫) (★ 無需變更 ★) ---
+# (此區塊所有函式都無需變更)
 
 def get_db_connection():
     try:
@@ -193,71 +194,40 @@ def get_db_connection():
         print(f"!!! 嚴重錯誤：無法連接到資料庫。錯誤：{e}")
         return None
 
-# 函數：初始化資料庫（★ 無需變更 ★）
 def initialize_database():
     conn = get_db_connection()
     if conn:
         try:
             register_vector(conn)
             print("--- (SQL) `register_vector` 成功 ---")
-
             with conn.cursor() as cur:
-                # 表格一：AI 的「記憶」
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS chat_history (
-                        user_id TEXT PRIMARY KEY,
-                        history JSONB
-                    );
-                """)
+                cur.execute("CREATE TABLE IF NOT EXISTS chat_history (user_id TEXT PRIMARY KEY, history JSONB);")
                 print("--- (SQL) 表格 'chat_history' 確認/建立成功 ---")
-
-                # 表格二：AI 的「知識庫」
-                cur.execute(f"""
-                    CREATE TABLE IF NOT EXISTS physics_vectors (
-                        id SERIAL PRIMARY KEY,
-                        content TEXT,
-                        embedding VECTOR({VECTOR_DIMENSION})
-                    );
-                """)
+                cur.execute(f"CREATE TABLE IF NOT EXISTS physics_vectors (id SERIAL PRIMARY KEY, content TEXT, embedding VECTOR({VECTOR_DIMENSION}));")
                 print(f"--- (SQL) 表格 'physics_vectors' (維度 {VECTOR_DIMENSION}) 確認/建立成功 ---")
-
-                # 表格三：人類的「研究日誌」
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS research_log (
-                        id SERIAL PRIMARY KEY,
-                        timestamp TIMESTZ DEFAULT CURRENT_TIMESTAMP,
-                        user_id TEXT,
-                        user_message_type TEXT,
-                        user_content TEXT,
-                        image_url TEXT,
-                        vision_analysis TEXT,
-                        rag_context TEXT,
-                        ai_response TEXT
-                    );
-                """)
+                        id SERIAL PRIMARY KEY, timestamp TIMESTZ DEFAULT CURRENT_TIMESTAMP, user_id TEXT,
+                        user_message_type TEXT, user_content TEXT, image_url TEXT,
+                        vision_analysis TEXT, rag_context TEXT, ai_response TEXT
+                    );""")
                 cur.execute("""
-                    DO $$
-                    BEGIN
+                    DO $$ BEGIN
                         IF NOT EXISTS (
                             SELECT 1 FROM information_schema.columns 
                             WHERE table_name='research_log' AND column_name='image_url'
-                        ) THEN
-                            ALTER TABLE research_log ADD COLUMN image_url TEXT;
-                        END IF;
-                    END$$;
-                """)
+                        ) THEN ALTER TABLE research_log ADD COLUMN image_url TEXT; END IF;
+                    END$$;""")
                 print("--- (SQL) ★ 第八紀元：表格 'research_log' (含 image_url) 確認/建立/升級成功 ★ ---")
-
                 conn.commit()
         except Exception as e:
             print(f"!!! 錯誤：無法初始化資料庫表格。錯誤：{e}")
         finally:
             conn.close()
 
-# --- ★ 第十七紀元：修正「幽靈 A」 (記憶) ★ ---
 def get_chat_history(user_id):
     conn = get_db_connection()
-    history_list = [] # ★「PS5」需要「Content 物件」列表
+    history_list = [] 
     if conn:
         try:
             with conn.cursor() as cur:
@@ -265,12 +235,10 @@ def get_chat_history(user_id):
                 result = cur.fetchone()
                 if result and result[0]:
                     history_json = result[0]
-                    # ★ 重建「PS5」的 Content 列表
                     for item in history_json:
                         role = item.get('role', 'user')
                         parts_text = item.get('parts', [])
                         if role == 'user' or role == 'model':
-                            # ★ 修正：使用「關鍵字」參數
                             history_list.append(types.Content(role=role, parts=[types.Part.from_text(text=text) for text in parts_text]))
         except Exception as e:
             print(f"!!! 錯誤：無法讀取 user_id '{user_id}' 的歷史紀錄。錯誤：{e}")
@@ -278,25 +246,20 @@ def get_chat_history(user_id):
             conn.close()
     return history_list 
 
-# --- ★ 第十四紀元：重寫「儲存記憶」 (PS5 語法) ★ ---
 def save_chat_history(user_id, chat_session):
     conn = get_db_connection()
     if conn:
         try:
             history_to_save = []
-            # ★「PS5」的語法是 .get_history()
             history = chat_session.get_history() 
             if history:
                 for message in history:
-                    # (我們只儲存 user 和 model 的對話)
                     if message.role == 'user' or message.role == 'model':
                         parts_text = [part.text for part in message.parts if hasattr(part, 'text')]
                         history_to_save.append({'role': message.role, 'parts': parts_text})
-
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO chat_history (user_id, history)
-                    VALUES (%s, %s)
+                    INSERT INTO chat_history (user_id, history) VALUES (%s, %s)
                     ON CONFLICT (user_id) DO UPDATE SET history = EXCLUDED.history;
                 """, (user_id, json.dumps(history_to_save)))
                 conn.commit()
@@ -305,57 +268,38 @@ def save_chat_history(user_id, chat_session):
         finally:
             conn.close()
 
-# --- ★ 第十七紀元 (修正版)：修正「幽靈 B」 (RAG 搜尋) ★ ---
 def find_relevant_chunks(query_text, k=3):
-    """搜尋最相關的 k 個教科書段落 (使用 Gemini Embedding)"""
-
     conn = None
-    if not client: return "N/A" # 檢查 client 是否成功初始化
-
+    if not client: return "N/A"
     try:
-        # ★★★ (新修正) 清理來自使用者輸入的 NUL (0x00) 字元 ★★★
         cleaned_query_text = query_text.replace('\x00', '')
-
         print(f"--- (RAG) 正在為問題「{cleaned_query_text[:20]}...」向 Gemini 請求向量... ---")
-        
         result = client.models.embed_content(
             model=EMBEDDING_MODEL,
-            contents=[cleaned_query_text] # ★ 使用清理過的查詢
+            contents=[cleaned_query_text] 
         )
-        
-        # ★ 修正：.embeddings (複數) 是一個列表，取 [0]，再取 .values
         query_vector = result.embeddings[0].values 
-
         print("--- (RAG) 正在連接資料庫以搜尋向量... ---")
         conn = get_db_connection()
-        if not conn:
-            return "N/A"
-
+        if not conn: return "N/A"
         register_vector(conn)
-
         with conn.cursor() as cur:
-            # ★ 修正：加入 ::vector 類型轉換 (修復 RAG 搜尋)
             cur.execute(
                 "SELECT content FROM physics_vectors ORDER BY embedding <-> %s::vector LIMIT %s",
-                (query_vector, k) # ★ 修正：使用 query_vector
+                (query_vector, k)
             )
             results = cur.fetchall()
-
         if not results:
             print("--- (RAG) 警告：在資料庫中找不到相關段落。 ---")
             return "N/A"
-
-        # (從資料庫讀取出的 content 理論上在重建時已被清理)
         context = "\n\n---\n\n".join([row[0] for row in results])
         print(f"--- (RAG) 成功找到 {len(results)} 個相關段落！ ---")
         return context
-
     except Exception as e:
         print(f"!!! (RAG) 嚴重錯誤：在 `find_relevant_chunks` 中失敗。錯誤：{e}")
         return "N/A"
     finally:
-        if conn:
-            conn.close()
+        if conn: conn.close()
 
 # --- ★ (新功能) 函數：儲存「研究日誌」(★ 升級版：同時寫入 Google Sheets ★) ---
 def save_to_research_log(user_id, user_msg_type, user_content, image_url, vision_analysis, rag_context, ai_response):
@@ -382,25 +326,12 @@ def save_to_research_log(user_id, user_msg_type, user_content, image_url, vision
     if worksheet: # 檢查 worksheet (在程式頂端) 是否在啟動時成功初始化
         try:
             print(f"--- (Google Sheets) 正在新增一列紀錄... ---")
-            
-            # 準備要新增的「一整列」資料
-            # (我們加入 'datetime' 來產生時間戳)
             now_utc = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-            
             row_data = [
-                now_utc,
-                user_id,
-                user_msg_type,
-                user_content,
-                image_url,
-                vision_analysis,
-                rag_context,
-                ai_response
+                now_utc, user_id, user_msg_type, user_content,
+                image_url, vision_analysis, rag_context, ai_response
             ]
-            
-            # 新增一列到工作表
             worksheet.append_row(row_data)
-            
             print(f"--- (Google Sheets) 新增一列成功 ---")
         except Exception as e:
             print(f"!!! 嚴重錯誤：無法寫入 Google Sheets。錯誤：{e}")
@@ -418,7 +349,7 @@ def callback():
         abort(400)
     return 'OK'
 
-# --- 步驟九：神殿的「主控室」(處理訊息) (★ 第十五紀元：雙重專家 ★) ---
+# --- 步驟九：神殿的「主控室」(處理訊息) (★ 還原 Cloudinary ★) ---
 @handler.add(MessageEvent, message=(TextMessage, ImageMessage))
 def handle_message(event):
 
@@ -434,7 +365,7 @@ def handle_message(event):
     user_content = ""
     image_url_to_save = "" 
     vision_analysis = ""
-    rag_context = "" # ★ 修正：這裡的變數名稱是 'rag_context' (t)
+    rag_context = "" 
     final_text = "" 
 
     # 1. 讀取「過去的記憶」
@@ -442,24 +373,22 @@ def handle_message(event):
 
     # 2. 根據「記憶」開啟「對話宗師」的對話
     try:
-         # ★「PS5」的語法是 client.chats.create
-         # ★「專家一」使用 CHAT_MODEL (gemini-2.5-pro)
          chat_session = client.chats.create(
              model=CHAT_MODEL, 
              history=past_history, 
-             config=generation_config # ★「PS5」的 config 在這裡傳入
+             config=generation_config 
          )
     except Exception as start_chat_e:
          print(f"!!! 警告：從歷史紀錄開啟對話失敗。使用空對話。錯誤：{start_chat_e}")
          chat_session = client.chats.create(model=CHAT_MODEL, history=[], config=generation_config)
 
     # 3. 準備「當前的輸入」(★ 兩階段專家系統 ★)
-    contents_to_send = [] # ★「PS5」的輸入
+    contents_to_send = []
     user_question = "" 
 
     try:
         if isinstance(event.message, ImageMessage):
-            # --- ★ 第八紀元：上傳圖片到「永恆檔案館」 ★ ---
+            # --- ★ (還原) 第八紀元：上傳圖片到「Cloudinary」 ★ ---
             user_message_type = "image"
             user_content = f"Image received (Message ID: {event.message.id})" 
 
@@ -468,6 +397,7 @@ def handle_message(event):
             image_bytes = message_content.content 
 
             try:
+                # ★ (還原) 呼叫 Cloudinary 上傳 ★
                 upload_result = cloudinary.uploader.upload(image_bytes)
                 image_url_to_save = upload_result.get('secure_url')
                 if image_url_to_save:
@@ -509,8 +439,6 @@ def handle_message(event):
             請直接開始你的「客觀描述」。
             """
 
-            # ★「PS5」的語法是 client.models.generate_content
-            # ★「專家二」使用 VISION_MODEL (gemini-2.5-flash-image)
             vision_response = client.models.generate_content(
                 model=VISION_MODEL, 
                 contents=[img, vision_prompt] # ★「PS5」的多模態輸入
@@ -543,7 +471,6 @@ def handle_message(event):
         1.  「首先」檢查「原始輸入」是否為「一個指令」(例如：教我物理觀念)。如果是，請「立刻執行指令」。
         2.  「如果不是」指令，才「接著」使用「相關段落」和「評估者邏輯」來回應。)
         """
-        # ★★★ (最終修正) 確保這裡使用的是 rag_context (t) ★★★
         contents_to_send = [rag_prompt.replace("{rag_content}", "{rag_context}")]
 
         # --- ★ 專家一：「對話宗師」啟動 (★ 第十七紀元：加入自動重試) ★ ---
@@ -588,8 +515,7 @@ def handle_message(event):
     # ★★★【第八紀元：最終儲存】★★★
     # 6. 儲存「研究日誌」(人類研究)
     
-    # ★ 修正：在儲存前，清理所有字串中的 NUL (0x00) 字元 ★
-    # ★ (新功能) 這裡的變數會被傳遞到 新的 save_to_research_log 函式
+    # ★ (新功能) 現在會同時儲存到 Neon 和 Google Sheets ★
     save_to_research_log(
         user_id=user_id.replace('\x00', ''),
         user_msg_type=user_message_type.replace('\x00', ''),
@@ -601,10 +527,9 @@ def handle_message(event):
     )
 
     # 7. 回覆使用者
-    # ★ 修正：將 'SendMessage' 修正回 'TextSendMessage'
     line_bot_api.reply_message(
         event.reply_token, 
-        TextSendMessage(text=final_text.replace('\x00', '')) # ★ (保險) 同時清理最終送出的文字
+        TextSendMessage(text=final_text.replace('\x00', '')) 
     )
 
 # --- 步驟十：啟動「神殿」 ---
