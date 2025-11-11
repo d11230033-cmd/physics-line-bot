@@ -4,7 +4,8 @@
 # 模型：★「專家一」 gemini-2.5-pro (對話) ★
 # 模型：★「專家二」 gemini-2.5-flash-image (視覺) ★
 # ... (之前的所有修正)
-# 修正：7. ★ (Gemini) 新增「聊天 API」的自動重試 (解決 500 INTERNAL 錯誤) ★
+# 修正：7. ★ (Gemini) 新增「聊天 API」的自動重試 (解決 500 錯誤) ★
+# 修正：8. ★ (RAG) 修正 'rag_content' vs 'rag_context' 的 NameError 錯字 ★
 # -----------------------------------
 
 import os
@@ -371,7 +372,7 @@ def handle_message(event):
     user_content = ""
     image_url_to_save = "" 
     vision_analysis = ""
-    rag_context = ""
+    rag_context = "" # ★ 修正：這裡的變數名稱是 'rag_context' (t)
     final_text = "" 
 
     # 1. 讀取「過去的記憶」
@@ -471,16 +472,18 @@ def handle_message(event):
         # ★ 第十二紀元：修改 RAG 提示詞 (中文版) ★
         rag_prompt = f"""
         ---「相關段落」開始---
-        {rag_content}
+        {rag_context} 
         ---「相關段落」結束---
 
         學生的「原始輸入」(可能是「指令」或「回答」)：「{user_question}」
 
         (請你「嚴格遵守」 System Prompt 中的「第十二紀元：中文指令」核心邏輯！
         1.  「首先」檢查「原始輸入」是否為「一個指令」(例如：教我物理觀念)。如果是，請「立刻執行指令」。
-        2.  「如果不是」指令，才「接著」使用「相關段落」和「評估者 logique」來回應。)
+        2.  「如果不是」指令，才「接著」使用「相關段落」和「評估者邏輯」來回應。)
         """
-        contents_to_send = [rag_prompt] # ★「PS5」的語法
+        # ★★★ (最終修正) 確保這裡使用的是 rag_context (t) ★★★
+        # (我在上一版錯打成 rag_content (n))
+        contents_to_send = [rag_prompt.replace("{rag_content}", "{rag_context}")]
 
         # --- ★ 專家一：「對話宗師」啟動 (★ 第十七紀元：加入自動重試) ★ ---
         print(f"--- (對話宗師) 正在呼叫 Gemini API ({CHAT_MODEL})... ---")
