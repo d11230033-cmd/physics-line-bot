@@ -1,8 +1,9 @@
 # --- 「神殿」：AI 宗師的核心 (第十七紀元：最終語法修正版) ---
 #
 # SDK：★「全新」 google-genai (PS5 SDK) ★
-# 修正：11. ★ (新功能) 新增「Google Sheets 試算表」日誌記錄 ★
+# ... (之前的所有修正)
 # 修正：12. ★ (架構還原) 恢復使用「Cloudinary」儲存圖片 (速度最快) ★
+# 修正：13. ★ (新功能) 新增「聽覺專家」，支援 LINE 錄音 (AudioMessage) ★
 # -----------------------------------
 
 import os
@@ -10,7 +11,8 @@ import pathlib
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMessage
+# ★ (新功能) 引入 AudioMessage ★
+from linebot.models import MessageEvent, TextMessage, ImageMessage, AudioMessage, TextSendMessage
 
 # --- ★ 第十四紀元：全新 SDK ★ ---
 from google import genai
@@ -96,7 +98,7 @@ except Exception as e:
     worksheet = None # 連接失敗
 
 # --- ★ 第十五紀元：定義「雙重專家」模型 ★ ---
-CHAT_MODEL = 'gemini-2.5-pro'           # ★ 專家一：複雜推理
+CHAT_MODEL = 'gemini-2.5-pro'           # ★ 專家一：複雜推理、★ (新) 聽覺 ★
 VISION_MODEL = 'gemini-2.5-flash-image'  # ★ 專家二：影像分析
 EMBEDDING_MODEL = 'models/text-embedding-004' # (保持不變，這是標準)
 VECTOR_DIMENSION = 768 # ★ 向量維度 768
@@ -105,7 +107,10 @@ VECTOR_DIMENSION = 768 # ★ 向量維度 768
 system_prompt = """
 你是一位頂尖的台灣高中物理教學AI，叫做「AI 宗師」。
 你的教學風格是「蘇格拉底式評估法」(Socratic Evaluator)。
-你「只會」收到兩種輸入：學生的「純文字提問」，或是由「視覺專家」預先分析好的「圖片內容分析」。
+你「只會」收到三種輸入：
+1.  學生的「純文字提問」。
+2.  由「視覺專家」預先分析好的「圖片內容分析」。
+3.  ★ (新) 由「聽覺專家」預先分析好的「錄音內容分析」。
 
 # --- 你的「絕對核心」指令 ---
 1.  **「永遠不要」** 給出「直接的答案」或「最終的解題步驟」。
@@ -349,8 +354,8 @@ def callback():
         abort(400)
     return 'OK'
 
-# --- 步驟九：神殿的「主控室」(處理訊息) (★ 還原 Cloudinary ★) ---
-@handler.add(MessageEvent, message=(TextMessage, ImageMessage))
+# --- 步驟九：神殿的「主控室」(處理訊息) (★ 升級版：支援 AudioMessage ★) ---
+@handler.add(MessageEvent, message=(TextMessage, ImageMessage, AudioMessage)) # ★ 支援 AudioMessage ★
 def handle_message(event):
 
     user_id = event.source.user_id
@@ -364,7 +369,7 @@ def handle_message(event):
     user_message_type = "unknown"
     user_content = ""
     image_url_to_save = "" 
-    vision_analysis = ""
+    vision_analysis = "" # ★ (重要) 聽覺和視覺專家，都共用這個變數
     rag_context = "" 
     final_text = "" 
 
@@ -382,13 +387,13 @@ def handle_message(event):
          print(f"!!! 警告：從歷史紀錄開啟對話失敗。使用空對話。錯誤：{start_chat_e}")
          chat_session = client.chats.create(model=CHAT_MODEL, history=[], config=generation_config)
 
-    # 3. 準備「當前的輸入」(★ 兩階段專家系統 ★)
+    # 3. 準備「當前的輸入」(★ 三位一體專家系統 ★)
     contents_to_send = []
     user_question = "" 
 
     try:
         if isinstance(event.message, ImageMessage):
-            # --- ★ (還原) 第八紀元：上傳圖片到「Cloudinary」 ★ ---
+            # --- ★ 專家一：「視覺專家」啟動 ★ ---
             user_message_type = "image"
             user_content = f"Image received (Message ID: {event.message.id})" 
 
@@ -397,7 +402,6 @@ def handle_message(event):
             image_bytes = message_content.content 
 
             try:
-                # ★ (還原) 呼叫 Cloudinary 上傳 ★
                 upload_result = cloudinary.uploader.upload(image_bytes)
                 image_url_to_save = upload_result.get('secure_url')
                 if image_url_to_save:
@@ -408,19 +412,14 @@ def handle_message(event):
                 print(f"!!! 嚴重錯誤：Cloudinary 圖片上傳失敗。錯誤：{upload_e}")
                 image_url_to_save = f"upload_error: {upload_e}"
 
-            # --- ★ 專家二：「視覺專家」啟動 (第十五紀元：雙重專家) ★ ---
             print(f"--- (視覺專家) 正在分析圖片 (使用 {VISION_MODEL})... ---")
-            img = Image.open(io.BytesIO(image_bytes)) # ★「PS5」SDK 支援 PIL Image
+            img = Image.open(io.BytesIO(image_bytes)) 
 
-            # ★ 第十三紀元：使用「精準讀取」的視覺 Prompt ★
             vision_prompt = """
             你是一個「精準的」光學掃描儀 (OCR) 和「圖表分析」工具。
             你的「唯一」任務是「客觀地」、「逐字地」、「逐點地」描述圖片內容。
-
             **「絕對禁止」**：
-            * 「絕對禁止」你「自己」去「解讀」物理意義。
-            * 「絕對禁止」你「自己」去「計算」答案。
-
+            * 「絕對禁止」你「自己」去「解讀」物理意義或「計算」答案。
             你的「工作流程」是：
             1.  **「如果是「新問題」**：
                 * 「1. 逐字」讀出「所有」的文字 (例如: "圖 10 為一發電機...")。
@@ -435,37 +434,79 @@ def handle_message(event):
             2.  **「如果是「學生作答」**：
                 * 「1. 逐字」讀出學生的「所有」手寫文字和計算過程。
                 * 「2. 客觀地」描述他的計算步驟，**「不要」**自己下判斷。
-
             請直接開始你的「客觀描述」。
             """
 
             vision_response = client.models.generate_content(
                 model=VISION_MODEL, 
-                contents=[img, vision_prompt] # ★「PS5」的多模態輸入
+                contents=[img, vision_prompt] 
             )
-            vision_analysis = vision_response.text 
+            vision_analysis = vision_response.text # ★ 存入共用變數
             print(f"--- (視覺專家) 分析完畢：{vision_analysis[:70]}... ---")
 
             user_question = f"圖片內容分析：『{vision_analysis}』。請基於這個分析，開始用蘇格拉底式教學法引導我。"
 
+        elif isinstance(event.message, AudioMessage):
+            # --- ★ (新功能) 專家二：「聽覺專家」啟動 ★ ---
+            user_message_type = "audio"
+            user_content = f"Audio received (Message ID: {event.message.id})" 
+            image_url_to_save = "N/A (Audio Message)" # 聲音訊息沒有圖片 URL
+
+            print(f"--- (聽覺專家) 收到來自 user_id '{user_id}' 的錄音，開始分析... ---")
+            message_content = line_bot_api.get_message_content(event.message.id)
+            audio_bytes = message_content.content
+            
+            # LINE 預設的錄音格式是 'audio/m4a'
+            audio_file = types.Part.from_data(data=audio_bytes, mime_type='audio/m4a')
+
+            audio_prompt = """
+            你是一個「精準的」聽打員和「語氣分析師」。
+            你的「唯一」任務是「客觀地」分析這段學生的錄音。
+
+            **「絕對禁止」**：
+            * 「絕對禁止」你「自己」去「回答」錄音中的物理問題。
+
+            你的「工作流程」是：
+            1.  **「逐字稿」**：100% 精確地聽打出學生說的「每一句話」(使用繁體中文)。
+            2.  **「語氣分析」**：客觀地描述學生的「情緒或語氣」(例如：聽起來很困惑、不確定、沮喪、有自信等)。
+
+            請「只」回傳這兩項分析，不要有多餘的對話。
+            例如：
+            「
+            逐字稿：「老師，我... 我還是不懂為什麼這裡要用 F 等於 ma，力矩...」
+            語氣分析：學生的語氣聽起來「非常困惑」而且「不確定」。
+            」
+            """
+            
+            # 我們使用最強的 CHAT_MODEL 來分析聲音
+            speech_response = client.models.generate_content(
+                model=CHAT_MODEL, 
+                contents=[audio_file, audio_prompt]
+            )
+            
+            vision_analysis = speech_response.text # ★ 存入共用變數 (vision_analysis)
+            print(f"--- (聽覺專家) 分析完畢：{vision_analysis[:70]}... ---")
+
+            user_question = f"錄音內容分析：『{vision_analysis}』。請基於這個分析，開始用蘇格拉底式教學法引導我。"
+
         else: 
-            # --- ★ 傳統文字訊息 ★ ---
+            # --- ★ 專家三：「純文字」輸入 ★ ---
             user_message_type = "text"
             user_question = event.message.text
             user_content = user_question 
             print(f"--- (文字 RAG) 收到來自 user_id '{user_id}' 的文字訊息... ---")
 
-        # --- ★ 統一 RAG 流程 (無論是文字還是圖片分析) ★ ---
+        # --- ★ 統一 RAG 流程 (無論是文字、圖片、還是錄音) ★ ---
         print(f"--- (RAG) 正在為「{user_question[:30]}...」執行 RAG 搜尋... ---")
         rag_context = find_relevant_chunks(user_question) 
 
         # ★ 第十二紀元：修改 RAG 提示詞 (中文版) ★
         rag_prompt = f"""
         ---「相關段落」開始---
-        {rag_context}
+        {rag_content}
         ---「相關段落」結束---
 
-        學生的「原始輸入」(可能是「指令」或「回答」)：「{user_question}」
+        學生的「原始輸入」(可能是「指令」、「回答」、「圖片分析」或「錄音分析」)：「{user_question}」
 
         (請你「嚴格遵守」 System Prompt 中的「第十二紀元：中文指令」核心邏輯！
         1.  「首先」檢查「原始輸入」是否為「一個指令」(例如：教我物理觀念)。如果是，請「立刻執行指令」。
@@ -473,7 +514,7 @@ def handle_message(event):
         """
         contents_to_send = [rag_prompt.replace("{rag_content}", "{rag_context}")]
 
-        # --- ★ 專家一：「對話宗師」啟動 (★ 第十七紀元：加入自動重試) ★ ---
+        # --- ★ AI 宗師：「對話宗師」啟動 (★ 第十七紀元：加入自動重試) ★ ---
         print(f"--- (對話宗師) 正在呼叫 Gemini API ({CHAT_MODEL})... ---")
         
         final_text = ""
@@ -493,7 +534,7 @@ def handle_message(event):
                 print(f"!!! (對話宗師) 警告：API 呼叫失敗 (第 {attempt} 次)。錯誤：{chat_api_e}")
                 
                 if attempt < max_retries:
-                    print(f"    ... 正在重試，等待 2 秒...")
+                    print(f"    ...  đang重試，等待 2 秒...")
                     time.sleep(2) # 等待 2 秒
                 else:
                     print(f"!!! (對話宗師) 嚴重錯誤：重試 {max_retries} 次後仍然失敗。")
@@ -507,7 +548,7 @@ def handle_message(event):
 
     except Exception as e:
         # ★ (這是外層的 except) 如果重試 2 次後還是失敗，就會跑到這裡
-        print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG/視覺操作失敗。錯誤：{e}")
+        print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG/視覺/聽覺操作失敗。錯誤：{e}")
         final_text = "抱歉，宗師目前正在檢索記憶/教科書或冥想中，請稍後再試。"
         if not user_content: user_content = "Error during processing"
         if not user_message_type: user_message_type = "error"
@@ -521,7 +562,7 @@ def handle_message(event):
         user_msg_type=user_message_type.replace('\x00', ''),
         user_content=user_content.replace('\x00', ''),
         image_url=image_url_to_save.replace('\x00', ''), 
-        vision_analysis=vision_analysis.replace('\x00', ''),
+        vision_analysis=vision_analysis.replace('\x00', ''), # ★ (重要) 聽覺和視覺分析都會存到這裡
         rag_context=rag_context.replace('\x00', ''),
         ai_response=final_text.replace('\x00', '')
     )
