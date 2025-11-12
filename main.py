@@ -14,8 +14,8 @@ from linebot.models import MessageEvent, TextMessage, ImageMessage, AudioMessage
 
 # --- ★ (新) Vertex AI SDK ★ ---
 import vertexai
-from vertexai.preview.generative_models import GenerativeModel, Part, Image
-from vertexai.preview.vision_models import ImageGenerationModel
+from vertexai.generative_models import GenerativeModel, Part, Image # 移除了 .preview
+from vertexai.vision_models import ImageGenerationModel         # 移除了 .preview (並修正路徑)
 from vertexai.language_models import TextEmbeddingModel
 
 from PIL import Image as PILImage
@@ -122,8 +122,14 @@ VECTOR_DIMENSION = 768
 
 # 初始化 Vertex AI 模型
 try:
-    chat_model = GenerativeModel(CHAT_MODEL_NAME)
-    vision_model = GenerativeModel(VISION_MODEL_NAME)
+    # vvvv ★ AI 核心人格 (System Prompt) 在此注入 vvvv
+    chat_model = GenerativeModel(
+        CHAT_MODEL_NAME, 
+        safety_settings=safety_settings,
+        system_instruction=system_prompt
+    )
+    # (視覺模型不需要，它有自己的 vision_prompt)
+    vision_model = GenerativeModel(VISION_MODEL_NAME, safety_settings=safety_settings)
     embedding_model = TextEmbeddingModel.from_pretrained(EMBEDDING_MODEL_NAME)
     image_gen_model = ImageGenerationModel.from_pretrained(IMAGE_GEN_MODEL_NAME)
     print(f"--- (Vertex AI) 所有 AI 專家 (Pro, Flash, Embedding, Imagen) 均已成功初始化！ ---")
@@ -207,7 +213,7 @@ system_prompt = """
 """
 
 # --- ★ (新) Vertex AI 安全設定 ★ ---
-from vertexai.preview.generative_models import HarmCategory as VertexHarmCategory, HarmBlockThreshold as VertexHarmBlockThreshold
+from vertexai.generative_models import HarmCategory as VertexHarmCategory, HarmBlockThreshold as VertexHarmBlockThreshold # 移除了 .preview
 
 safety_settings = {
     VertexHarmCategory.HARM_CATEGORY_HATE_SPEECH: VertexHarmBlockThreshold.BLOCK_NONE,
@@ -476,25 +482,21 @@ def handle_message(event):
     try:
          # ★ (新) Vertex AI 語法
          chat_session = chat_model.start_chat(
-             history=past_history,
-             generation_config={
-                 "safety_settings": safety_settings
-             }
+             history=past_history
+             # ------------------------------------
+             # (已移除 generation_config)
+             # ------------------------------------
          )
-         # ★ (新) Vertex AI 需要手動加入 System Prompt
-         chat_session.send_message(system_prompt, stream=False)
-         # (清除 system prompt，不存入資料庫)
-         chat_session.history = chat_session.history[2:] 
 
     except Exception as start_chat_e:
          print(f"!!! 警告：從歷史紀錄開啟對話失敗。使用空對話。錯誤：{start_chat_e}")
          chat_session = chat_model.start_chat(
-             history=[], 
-             generation_config={"safety_settings": safety_settings}
+             history=[]
+             # ------------------------------------
+             # (已移除 generation_config)
+             # ------------------------------------
          )
-         chat_session.send_message(system_prompt, stream=False)
-         chat_session.history = chat_session.history[2:] 
-
+  
     # 3. 準備「當前的輸入」(★ 三位一體專家系統 ★)
     contents_to_send = []
     user_question = "" 
@@ -547,9 +549,9 @@ def handle_message(event):
             """
 
             vision_response = vision_model.generate_content(
-                [img, vision_prompt],
-                generation_config={"safety_settings": safety_settings}
-            )
+                [img, vision_prompt]
+                # (generation_config 已移除，因為模型初始化時已設定)
+            )
             vision_analysis = vision_response.text 
             print(f"--- (視覺專家) 分析完畢：{vision_analysis[:70]}... ---")
 
@@ -585,9 +587,9 @@ def handle_message(event):
             """
             
             speech_response = chat_model.generate_content(
-                [audio_file, audio_prompt],
-                generation_config={"safety_settings": safety_settings}
-            )
+                [audio_file, audio_prompt]
+  S              # (generation_config 已移除，因為模型初始化時已設定)
+            )
             
             vision_analysis = speech_response.text 
             print(f"--- (聽覺專家) 分析完畢：{vision_analysis[:70]}... ---")
