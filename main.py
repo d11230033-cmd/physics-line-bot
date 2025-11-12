@@ -116,8 +116,8 @@ print("--- (TTS) 語音輸出功能已移除，確保系統穩定 ---")
 
 # --- ★ (新) Vertex AI 模型定義 ★ ---
 # ★ (修正) 降級至 GA (General Availability) 穩定版模型 ★
-CHAT_MODEL_NAME = 'gemini-1.5-pro'         # ★ 修正
-VISION_MODEL_NAME = 'gemini-1.5-flash'       # ★ 修正
+CHAT_MODEL_NAME = 'gemini-2.5-pro'         # ★ 修正
+VISION_MODEL_NAME = 'gemini-2.5-flash-image'       # ★ 修正
 EMBEDDING_MODEL_NAME = 'text-embedding-004'    # (OK)
 IMAGE_GEN_MODEL_NAME = 'imagen-3.0-generate-002' # (OK)
 VECTOR_DIMENSION = 768
