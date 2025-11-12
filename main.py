@@ -2,7 +2,7 @@
 #
 # SDK：★「全新」 google-cloud-aiplatform (Vertex AI) ★
 # ... (之前的所有修正)
-# 修正：24. ★ (重大 Bug 修正) 修正 Vertex AI SDK 的 get_chat_history() AttributeError ★
+# 修正：25. ★ (重大 Bug 修正) 404 Model Not Found -> 降級至 1.5 Pro/Flash (GA 穩定版) ★
 # -----------------------------------
 
 import os
@@ -97,6 +97,7 @@ try:
     
     # 3. ★★★ (新修正 + 請修改) 使用您試算表的「金鑰 (Key)」 ★★★
     # (請貼上您在「步驟一」從網址列複製的那串金鑰)
+    SPREADSHEET_KEY = "1Evd8WACx_uDUl04c5x2jADFxgLl1A3jW2z0_RynTmhU" # ★★★ 在這裡貼上您的 KEY ★★★
     
     sh = gc.open_by_key(SPREADSHEET_KEY)
     
@@ -114,10 +115,11 @@ TTS_CLIENT = None
 print("--- (TTS) 語音輸出功能已移除，確保系統穩定 ---")
 
 # --- ★ (新) Vertex AI 模型定義 ★ ---
-CHAT_MODEL_NAME = 'gemini-2.5-pro'
-VISION_MODEL_NAME = 'gemini-2.5-flash-image'
-EMBEDDING_MODEL_NAME = 'text-embedding-004' # Vertex AI 上的模型名稱
-IMAGE_GEN_MODEL_NAME = 'imagen-3.0-generate-002' # ★ (修正) 使用您找到的「精確」模型 ★
+# ★ (修正) 降級至 GA (General Availability) 穩定版模型 ★
+CHAT_MODEL_NAME = 'gemini-2.5-pro'         # ★ 修正
+VISION_MODEL_NAME = 'gemini-2.5-flash-image'       # ★ 修正
+EMBEDDING_MODEL_NAME = 'text-embedding-004'    # (OK)
+IMAGE_GEN_MODEL_NAME = 'imagen-3.0-generate-002' # (OK)
 VECTOR_DIMENSION = 768
 
 # --- ★ (新) Vertex AI 安全設定 ★ ---
