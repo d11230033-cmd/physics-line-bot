@@ -120,33 +120,6 @@ EMBEDDING_MODEL_NAME = 'text-embedding-004' # Vertex AI 上的模型名稱
 IMAGE_GEN_MODEL_NAME = 'imagen-3.0-generate-002' # ★ (修正) 使用您找到的「精確」模型 ★
 VECTOR_DIMENSION = 768
 
-# --- ★ (新) Vertex AI 安全設定 ★ ---
-from vertexai.generative_models import HarmCategory as VertexHarmCategory, HarmBlockThreshold as VertexHarmBlockThreshold # 移除了 .preview
-
-safety_settings = {
-    VertexHarmCategory.HARM_CATEGORY_HATE_SPEECH: VertexHarmBlockThreshold.BLOCK_NONE,
-    VertexHarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: VertexHarmBlockThreshold.BLOCK_NONE,
-    VertexHarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: VertexHarmBlockThreshold.BLOCK_NONE,
-    VertexHarmCategory.HARM_CATEGORY_HARASSMENT: VertexHarmBlockThreshold.BLOCK_NONE,
-}
-
-# 初始化 Vertex AI 模型
-try:
-    # vvvv ★ AI 核心人格 (System Prompt) 在此注入 vvvv
-    chat_model = GenerativeModel(
-        CHAT_MODEL_NAME, 
-        safety_settings=safety_settings,
-        system_instruction=system_prompt
-    )
- # (視覺模型不需要，它有自己的 vision_prompt)
-    vision_model = GenerativeModel(VISION_MODEL_NAME, safety_settings=safety_settings)
-    embedding_model = TextEmbeddingModel.from_pretrained(EMBEDDING_MODEL_NAME)
-    image_gen_model = ImageGenerationModel.from_pretrained(IMAGE_GEN_MODEL_NAME)
-    print(f"--- (Vertex AI) 所有 AI 專家 (Pro, Flash, Embedding, Imagen) 均已成功初始化！ ---")
-except Exception as e:
-    print(f"!!! 嚴重錯誤：初始化 Vertex AI 模型失敗。錯誤：{e}")
-    chat_model = None # 禁用
-
 # --- 步驟四：AI 宗師的「靈魂」核心 (★ Persona 升級 ★) ---
 system_prompt = """
 你是一位頂尖大學的物理系博士，你對於高中物理教師甄試筆試與物理奧林匹亞競賽非常擅長而且是專家等級，你目前是頂尖台灣高中物理教師，你對於高中物理的知識與專業無庸置疑，更是頂尖台灣高中物理教學AI，叫做「JYM物理AI助教」。
@@ -221,6 +194,34 @@ system_prompt = """
     * **3. (提供類題):** 在筆記之後，你「必須」接著說：「接下來，這裡有一題「類似題」，請你試著解解看：」
     * **4. (產生類題):** 你「必須」立刻「產生一個」與剛剛題目「概念相似，但數字或情境不同」的「新類題」。
 """
+
+# --- ★ (新) Vertex AI 安全設定 ★ ---
+from vertexai.generative_models import HarmCategory as VertexHarmCategory, HarmBlockThreshold as VertexHarmBlockThreshold # 移除了 .preview
+
+safety_settings = {
+    VertexHarmCategory.HARM_CATEGORY_HATE_SPEECH: VertexHarmBlockThreshold.BLOCK_NONE,
+    VertexHarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: VertexHarmBlockThreshold.BLOCK_NONE,
+    VertexHarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: VertexHarmBlockThreshold.BLOCK_NONE,
+    VertexHarmCategory.HARM_CATEGORY_HARASSMENT: VertexHarmBlockThreshold.BLOCK_NONE,
+}
+
+# 初始化 Vertex AI 模型
+try:
+    # vvvv ★ AI 核心人格 (System Prompt) 在此注入 vvvv
+    chat_model = GenerativeModel(
+        CHAT_MODEL_NAME, 
+        safety_settings=safety_settings,
+        system_instruction=system_prompt
+    )
+ # (視覺模型不需要，它有自己的 vision_prompt)
+    vision_model = GenerativeModel(VISION_MODEL_NAME, safety_settings=safety_settings)
+    embedding_model = TextEmbeddingModel.from_pretrained(EMBEDDING_MODEL_NAME)
+    image_gen_model = ImageGenerationModel.from_pretrained(IMAGE_GEN_MODEL_NAME)
+    print(f"--- (Vertex AI) 所有 AI 專家 (Pro, Flash, Embedding, Imagen) 均已成功初始化！ ---")
+except Exception as e:
+    print(f"!!! 嚴重錯誤：初始化 Vertex AI 模型失敗。錯誤：{e}")
+    chat_model = None # 禁用
+
 
 # --- 步驟七：連接「外部大腦」(Neon 資料庫) (★ 無需變更 ★) ---
 # (此區塊所有函式都無需變更)
