@@ -1,8 +1,8 @@
 # --- 「神殿」：AI 宗師的核心 (第二十一紀元：Vertex AI 遷移版) ---
 #
 # SDK：★「全新」 google-cloud-aiplatform (Vertex AI) ★
-# 修正：21. ★ (架構遷移) 遷移到 Vertex AI，解鎖 Imagen 3 繪圖功能 ★
-# 修正：22. ★ (繪圖修正) 使用「精確」的 imagen-3.0-generate-002 模型 ★
+# ... (之前的所有修正)
+# 修正：23. ★ (重大 Bug 修正) 修正 Vertex AI SDK 的 start_chat() TypeError ★
 # -----------------------------------
 
 import os
@@ -120,16 +120,15 @@ EMBEDDING_MODEL_NAME = 'text-embedding-004' # Vertex AI 上的模型名稱
 IMAGE_GEN_MODEL_NAME = 'imagen-3.0-generate-002' # ★ (修正) 使用您找到的「精確」模型 ★
 VECTOR_DIMENSION = 768
 
-# 初始化 Vertex AI 模型
-try:
-    chat_model = GenerativeModel(CHAT_MODEL_NAME)
-    vision_model = GenerativeModel(VISION_MODEL_NAME)
-    embedding_model = TextEmbeddingModel.from_pretrained(EMBEDDING_MODEL_NAME)
-    image_gen_model = ImageGenerationModel.from_pretrained(IMAGE_GEN_MODEL_NAME)
-    print(f"--- (Vertex AI) 所有 AI 專家 (Pro, Flash, Embedding, Imagen) 均已成功初始化！ ---")
-except Exception as e:
-    print(f"!!! 嚴重錯誤：初始化 Vertex AI 模型失敗。錯誤：{e}")
-    chat_model = None # 禁用
+# --- ★ (新) Vertex AI 安全設定 ★ ---
+from vertexai.preview.generative_models import HarmCategory as VertexHarmCategory, HarmBlockThreshold as VertexHarmBlockThreshold
+
+safety_settings = {
+    VertexHarmCategory.HARM_CATEGORY_HATE_SPEECH: VertexHarmBlockThreshold.BLOCK_NONE,
+    VertexHarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: VertexHarmBlockThreshold.BLOCK_NONE,
+    VertexHarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: VertexHarmBlockThreshold.BLOCK_NONE,
+    VertexHarmCategory.HARM_CATEGORY_HARASSMENT: VertexHarmBlockThreshold.BLOCK_NONE,
+}
 
 # --- 步驟四：AI 宗師的「靈魂」核心 (★ Persona 升級 ★) ---
 system_prompt = """
@@ -206,15 +205,23 @@ system_prompt = """
     * **4. (產生類題):** 你「必須」立刻「產生一個」與剛剛題目「概念相似，但數字或情境不同」的「新類題」。
 """
 
-# --- ★ (新) Vertex AI 安全設定 ★ ---
-from vertexai.preview.generative_models import HarmCategory as VertexHarmCategory, HarmBlockThreshold as VertexHarmBlockThreshold
-
-safety_settings = {
-    VertexHarmCategory.HARM_CATEGORY_HATE_SPEECH: VertexHarmBlockThreshold.BLOCK_NONE,
-    VertexHarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: VertexHarmBlockThreshold.BLOCK_NONE,
-    VertexHarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: VertexHarmBlockThreshold.BLOCK_NONE,
-    VertexHarmCategory.HARM_CATEGORY_HARASSMENT: VertexHarmBlockThreshold.BLOCK_NONE,
-}
+# ★ (修正) Vertex AI 模型初始化 (★ 語法修正 ★)
+try:
+    chat_model = GenerativeModel(
+        CHAT_MODEL_NAME,
+        system_instruction=[system_prompt], # ★ (修正) System Prompt 在此傳入
+        safety_settings=safety_settings      # ★ (修正) Safety Settings 在此傳入
+    )
+    vision_model = GenerativeModel(
+        VISION_MODEL_NAME,
+        safety_settings=safety_settings      # ★ (修正) 也為視覺模型加入安全設定
+    )
+    embedding_model = TextEmbeddingModel.from_pretrained(EMBEDDING_MODEL_NAME)
+    image_gen_model = ImageGenerationModel.from_pretrained(IMAGE_GEN_MODEL_NAME)
+    print(f"--- (Vertex AI) 所有 AI 專家 (Pro, Flash, Embedding, Imagen) 均已成功初始化！ ---")
+except Exception as e:
+    print(f"!!! 嚴重錯誤：初始化 Vertex AI 模型失敗。錯誤：{e}")
+    chat_model = None # 禁用
 
 # --- 步驟七：連接「外部大腦」(Neon 資料庫) (★ 無需變更 ★) ---
 # (此區塊所有函式都無需變更)
@@ -474,26 +481,21 @@ def handle_message(event):
 
     # 2. 根據「記憶」開啟「對話宗師」的對話
     try:
-         # ★ (新) Vertex AI 語法
+         # ★ (修正) Vertex AI 語法 ★
          chat_session = chat_model.start_chat(
-             history=past_history,
-             generation_config={
-                 "safety_settings": safety_settings
-             }
+             history=past_history
+             # ★ (修正) 移除錯誤的 generation_config
          )
-         # ★ (新) Vertex AI 需要手動加入 System Prompt
-         chat_session.send_message(system_prompt, stream=False)
-         # (清除 system prompt，不存入資料庫)
-         chat_session.history = chat_session.history[2:] 
+         # ★ (修正) 移除多餘的 send_message 和 history 清除
 
     except Exception as start_chat_e:
          print(f"!!! 警告：從歷史紀錄開啟對話失敗。使用空對話。錯誤：{start_chat_e}")
+         # ★ (修正) Vertex AI 語法 ★
          chat_session = chat_model.start_chat(
-             history=[], 
-             generation_config={"safety_settings": safety_settings}
+             history=[]
+             # ★ (修正) 移除錯誤的 generation_config
          )
-         chat_session.send_message(system_prompt, stream=False)
-         chat_session.history = chat_session.history[2:] 
+         # ★ (修正) 移除多餘的 send_message 和 history 清除
 
     # 3. 準備「當前的輸入」(★ 三位一體專家系統 ★)
     contents_to_send = []
@@ -548,7 +550,7 @@ def handle_message(event):
 
             vision_response = vision_model.generate_content(
                 [img, vision_prompt],
-                generation_config={"safety_settings": safety_settings}
+                # ★ (修正) Vertex AI 中，安全設定已在模型初始化時設定
             )
             vision_analysis = vision_response.text 
             print(f"--- (視覺專家) 分析完畢：{vision_analysis[:70]}... ---")
@@ -586,7 +588,7 @@ def handle_message(event):
             
             speech_response = chat_model.generate_content(
                 [audio_file, audio_prompt],
-                generation_config={"safety_settings": safety_settings}
+                # ★ (修正) Vertex AI 中，安全設定已在模型初始化時設定
             )
             
             vision_analysis = speech_response.text 
@@ -625,18 +627,18 @@ def handle_message(event):
                 # ★ (新) Vertex AI 語法
                 response = chat_session.send_message(contents_to_send)
                 final_response_text = response.text 
-                print(f"--- (對話宗師) Vertex AI 回應成功 (嘗試第 {attempt + 1} 次) ---")
+                print(f"--- (對話宗S) Vertex AI 回應成功 (嘗試第 {attempt + 1} 次) ---")
                 break 
 
             except Exception as chat_api_e:
                 attempt += 1
-                print(f"!!! (對話宗師) 警告：API 呼叫失敗 (第 {attempt} 次)。錯誤：{chat_api_e}")
+                print(f"!!! (對話宗S) 警告：API 呼叫失敗 (第 {attempt} 次)。錯誤：{chat_api_e}")
                 
                 if attempt < max_retries:
                     print(f"    ... 正在重試，等待 2 秒...")
                     time.sleep(2) 
                 else:
-                    print(f"!!! (對話宗師) 嚴重錯誤：重試 {max_retries} 次後仍然失敗。")
+                    print(f"!!! (對話宗S) 嚴重錯誤：重試 {max_retries} 次後仍然失敗。")
                     raise chat_api_e 
         
         # --- ★ (新功能) 圖像生成邏輯 (★ 修正版：非同步 ★) ---
