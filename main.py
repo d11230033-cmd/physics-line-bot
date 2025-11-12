@@ -1,9 +1,9 @@
-# --- 「神殿」：AI 宗師的核心 (第二十紀元：最終非同步版) ---
+# --- 「神殿」：AI 宗師的核心 (第二十紀元：最終穩定版) ---
 #
 # SDK：★「全新」 google-genai (PS5 SDK) ★
 # ... (之前的所有修正)
-# 修正：17. ★ (Timeout Bug) 將「繪圖」改為「非同步」(Threading)，修復 Worker Timeout ★
-# 修正：18. ★ (Persona 升級) 更新 AI 靈魂為「JYM物理AI助教」★
+# 修正：19. ★ (一致性修正) 將程式碼中所有 "AI 宗師" 替換為 "JYM助教" ★
+# 修正：20. ★ (穩定性修正) 移除不相容的「繪圖」功能，修復所有 Bug ★
 # -----------------------------------
 
 import os
@@ -11,8 +11,8 @@ import pathlib
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-# ★ (還原) 移除 AudioSendMessage，因為我們不輸出語音
-from linebot.models import MessageEvent, TextMessage, ImageMessage, AudioMessage, TextSendMessage, ImageSendMessage 
+# ★ (還原) 移除 ImageSendMessage，因為我們不繪圖
+from linebot.models import MessageEvent, TextMessage, ImageMessage, AudioMessage, TextSendMessage
 
 # --- ★ 第十四紀元：全新 SDK ★ ---
 from google import genai
@@ -25,7 +25,7 @@ import psycopg2 # 藍圖三：資料庫工具
 import json     # 藍圖三：資料庫工具
 import datetime # ★ 第七紀元：需要時間戳
 import time     # ★ (新功能) 為了「自動重試」
-import threading # ★ (新功能) 為了「非同步」繪圖
+# ★ (移除) import threading
 
 # --- ★ (還原) 第八紀元：永恆檔案館工具 ★ ---
 import cloudinary
@@ -104,10 +104,10 @@ except Exception as e:
 TTS_CLIENT = None
 print("--- (TTS) 語音輸出功能已移除，確保系統穩定 ---")
 
-# --- ★ 第十五紀元：定義「雙重專家」模型 (★ 繪圖模型修正為 gemini-2.5-flash-image) ★ ---
+# --- ★ 第十五紀元：定義「雙重專家」模型 (★ 移除繪圖 ★) ---
 CHAT_MODEL = 'gemini-2.5-pro'           # ★ 專家一：複雜推理、★ (新) 聽覺
 VISION_MODEL = 'gemini-2.5-flash-image'  # ★ 專家二：影像分析
-IMAGE_GEN_MODEL = 'gemini-2.5-flash-image' # ★ (繪圖復活) 現在它也可以繪圖了！
+# ★ (移除) IMAGE_GEN_MODEL
 EMBEDDING_MODEL = 'models/text-embedding-004' # (保持不變，這是標準)
 VECTOR_DIMENSION = 768 # ★ 向量維度 768
 
@@ -127,18 +127,7 @@ system_prompt = """
 4.  **「絕對禁止」** 說出「答案是...」或「你應該要...」。
 5.  **「絕對必須」**：你「所有」的回應「必須」 100% 使用「繁體中文」(台灣用語)。「絕對禁止」使用「簡體中文」。
 
-# --- ★ 「繪圖魔法」指令 (第十九紀元：繪圖復活) ★ ---
-* **你可以生成圖片。** 當你判斷「一張圖」會比「純文字」更能幫助學生理解**物理概念、力圖、運動軌跡、光學路徑、電路圖、圖表關係或任何幾何概念**時，你「必須」在回應中**「使用圖像生成標籤」**。
-* **生成圖片的格式：** 在你希望生成圖片的地方，插入這個標籤：`{draw:<圖片的詳細描述>}`。
-* **範例：**
-    * 如果你想畫一個自由落體的示意圖：`{draw:一個從高處自由落下的球，旁邊有重力向量向下}`
-    * 如果你想畫一個電路圖：`{draw:一個包含電池、燈泡和開關的簡單串聯電路圖}`
-    * 如果你想畫一個速度時間圖：`{draw:一個橫軸為時間(t)縱軸為速度(v)的速度時間圖，顯示物體以等加速度從靜止開始加速的直線}`
-* **限制：** 你**一次對話中「最多」只能生成一張圖片**。如果已經生成過圖片，就不要再生成。
-* **圖片描述要求：**
-    * **「必須」** 使用「繁體中文」。
-    * **「必須」** 盡可能「詳細」、「具體」，描述圖片的「核心物理元素」和「關係」。
-    * **「絕對禁止」** 在 `draw:` 後面加入任何「非描述性」的內容 (例如：「請畫」、「宗師畫圖」)。
+# --- ★ 「繪圖魔法」指令 (★ 已移除 ★) ---
 
 # --- ★ 「第十二紀元：中文指令」核心邏輯 ★ ---
 # 這是你最重要的思考流程！
@@ -264,12 +253,9 @@ def get_chat_history(user_id):
                     for item in history_json:
                         role = item.get('role', 'user')
                         parts_text = item.get('parts', [])
-                        # ★ 處理潛在的 `{draw:...}` 標籤，不把它當成文字訊息 ★
+                        # ★ (移除) 繪圖標籤過濾
                         if role == 'user' or role == 'model':
-                            # 過濾掉 {draw:...} 標籤，只保留純文字的部分
-                            filtered_parts = [p for p in parts_text if not p.strip().startswith('{draw:')]
-                            if filtered_parts: # 只有在有實際文字內容時才添加
-                                history_list.append(types.Content(role=role, parts=[types.Part.from_text(text=text) for text in filtered_parts]))
+                            history_list.append(types.Content(role=role, parts=[types.Part.from_text(text=text) for text in parts_text]))
         except Exception as e:
             print(f"!!! 錯誤：無法讀取 user_id '{user_id}' 的歷史紀錄。錯誤：{e}")
         finally:
@@ -367,50 +353,7 @@ def save_to_research_log(user_id, user_msg_type, user_content, image_url, vision
             print(f"!!! 嚴重錯誤：無法寫入 Google Sheets。錯誤：{e}")
 
 
-# --- ★ (新功能) 函數：在「背景」繪圖並「推送」給使用者 ★ ---
-def generate_and_push_image(user_id, draw_command):
-    try:
-        print(f"--- (繪圖魔法 - 背景) AI 宗師請求繪圖：'{draw_command}' (使用 {IMAGE_GEN_MODEL}) ---")
-        
-        # ★ (修正) 使用 client.models.generate_content
-        image_gen_response = client.models.generate_content(
-            model=IMAGE_GEN_MODEL, 
-            contents=[f"請生成一張關於'{draw_command}'的物理教學示意圖。風格簡潔、清晰、易於理解，適合高中生。繁體中文。"]
-        )
-        
-        if image_gen_response.parts and image_gen_response.parts[0].mime_type.startswith('image/'):
-            image_data = image_gen_response.parts[0].data 
-            
-            print("--- (繪圖魔法 - 背景) 正在上傳生成的圖片到 Cloudinary... ---")
-            upload_gen_image_result = cloudinary.uploader.upload(
-                io.BytesIO(image_data),
-                resource_type="image",
-                folder="ai_guru_generated_images" 
-            )
-            generated_image_url = upload_gen_image_result.get('secure_url')
-            
-            if generated_image_url:
-                print(f"--- (繪圖魔法 - 背景) 圖片生成並上傳成功！URL: {generated_image_url} ---")
-                
-                # ★★★ 使用 PUSH_MESSAGE (推送訊息) ★★★
-                line_bot_api.push_message(
-                    user_id,
-                    ImageSendMessage(
-                        original_content_url=generated_image_url,
-                        preview_image_url=generated_image_url
-                    )
-                )
-            else:
-                print("!!! (背景) 錯誤：生成的圖片上傳 Cloudinary 失敗。")
-                line_bot_api.push_message(user_id, TextSendMessage(text="抱歉，宗師試圖畫一張圖，但目前畫不出來。"))
-        else:
-            print("!!! (背景) 錯誤：gemini-2.5-flash-image 圖像生成回應為空或不是圖片。")
-            line_bot_api.push_message(user_id, TextSendMessage(text="抱歉，宗師試圖畫一張圖，但目前畫不出來。"))
-    
-    except Exception as gen_image_e:
-        print(f"!!! (背景) 嚴重錯誤：圖像生成或上傳失敗。錯誤：{gen_image_e}")
-        line_bot_api.push_message(user_id, TextSendMessage(text="抱歉，宗師試圖畫一張圖，但目前遇到了一些困難。"))
-
+# ★ (移除) 背景繪圖函式 ★
 
 initialize_database()
 
@@ -425,7 +368,7 @@ def callback():
         abort(400)
     return 'OK'
 
-# --- 步驟九：神殿的「主控室」(處理訊息) (★ 修正：非同步繪圖 ★) ---
+# --- 步驟九：神殿的「主控室」(處理訊息) (★ 還原版：移除繪圖 ★) ---
 @handler.add(MessageEvent, message=(TextMessage, ImageMessage, AudioMessage)) # ★ 支援 AudioMessage ★
 def handle_message(event):
 
@@ -433,7 +376,8 @@ def handle_message(event):
 
     if not client:
         print("!!! 嚴重錯誤：Gemini Client 未初始化！(金鑰可能錯誤)")
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="抱歉，助教目前金鑰遺失，請檢查 Render 環境變數 `GEMINI_API_KEY`。"))
+        # ★ (一致性修正)
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="抱歉，JYM助教目前金鑰遺失，請檢查 Render 環境變數 `GEMINI_API_KEY`。"))
         return
 
     # --- ★ 第八紀元：初始化研究日誌變數 ★ ---
@@ -444,9 +388,6 @@ def handle_message(event):
     rag_context = "" 
     final_response_text = "" # AI 的原始文字回應 (用於日誌)
     line_replies = []        # 準備傳送給 LINE 的訊息列表
-    
-    # ★ (新功能) 判斷是否已經生成過圖片，避免重複生成 ★
-    generated_image_in_this_session = False 
     
     # 1. 讀取「過去的記憶」
     past_history = get_chat_history(user_id)
@@ -545,7 +486,7 @@ def handle_message(event):
             例如：
             「
             逐字稿：「老師，我... 我還是不懂為什麼這裡要用 F 等於 ma，力矩...」
-            語氣分析：學生的語氣聽起來「非常困ADO」而且「不確定」。
+            語氣分析：學生的語氣聽起來「非常困惑」而且「不確定」。
             」
             """
             
@@ -608,41 +549,10 @@ def handle_message(event):
                     print(f"!!! (對話宗師) 嚴重錯誤：重試 {max_retries} 次後仍然失敗。")
                     raise chat_api_e 
         
-        # --- ★ (新功能) 圖像生成邏輯 (★ 修正版：非同步 ★) ---
-        if "{draw:" in final_response_text and not generated_image_in_this_session:
-            start_index = final_response_text.find("{draw:")
-            end_index = final_response_text.find("}", start_index)
-            
-            if start_index != -1 and end_index != -1:
-                draw_command = final_response_text[start_index + len("{draw:"):end_index].strip()
-                final_response_text_without_draw = final_response_text.replace(final_response_text[start_index:end_index+1], "").strip()
-                
-                print(f"--- (繪圖魔法) 偵測到繪圖指令：'{draw_command}' ---")
-                
-                # 1. 立即回覆的文字
-                instant_reply_text = f"好的，JYM助教正在為您繪製「{draw_command}」，請稍候..."
-                
-                # 2. 如果 AI 還有後續文字，先一起回覆
-                if final_response_text_without_draw:
-                    instant_reply_text += f"\n\n{final_response_text_without_draw}"
-                
-                # 3. 將 "請稍候" 的訊息加入回覆列表
-                line_replies.append(TextSendMessage(text=instant_reply_text.replace('\x00', '')))
-                
-                # 4. ★ (關鍵) 建立一個「背景執行緒」去處理「緩慢的」繪圖和上傳
-                print(f"--- (繪圖魔法) 正在啟動背景執行緒來繪圖... ---")
-                thread = threading.Thread(target=generate_and_push_image, args=(user_id, draw_command))
-                thread.start()
-
-                # 5. 標記，這樣就不會執行下面的 "else"
-                generated_image_in_this_session = True 
-                
-            else: # 標籤不完整，當成普通文字處理
-                line_replies.append(TextSendMessage(text=final_response_text.replace('\x00', '')))
+        # ★ (移除) 圖像生成邏輯 ★
         
-        # ★ (修正) 如果 *沒有* 觸發繪圖，才執行原本的 "else"
-        if not generated_image_in_this_session:
-            line_replies.append(TextSendMessage(text=final_response_text.replace('\x00', '')))
+        # ★ (還原) 繪圖功能已移除，我們只需要一個 final_text
+        line_replies.append(TextSendMessage(text=final_response_text.replace('\x00', '')))
         
         # 5. 儲存「更新後的記憶」(AI 記憶)
         print(f"--- (記憶) 正在儲存 user_id '{user_id}' 的對話紀錄... ---")
@@ -652,7 +562,8 @@ def handle_message(event):
         # ★ (移除) 語音合成 (TTS) 邏輯 ★
 
     except Exception as e:
-        print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG/視覺/聽覺/繪圖操作失敗。錯誤：{e}")
+        print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG/視覺/聽覺操作失敗。錯誤：{e}")
+        # ★ (一致性修正)
         final_response_text = "抱歉，JYM助教目前正在檢索記憶/教科書或冥想中，請稍後再試。"
         if not user_content: user_content = "Error during processing"
         if not user_message_type: user_message_type = "error"
@@ -671,7 +582,7 @@ def handle_message(event):
         ai_response=final_response_text.replace('\x00', '') # ★ (修正) 儲存 AI 的原始文字回應
     )
 
-    # 7. 回覆使用者 (★ 現在只回覆「請稍候...」或「純文字」)
+    # 7. 回覆使用者 (★ 還原)
     line_bot_api.reply_message(
         event.reply_token, 
         line_replies 
