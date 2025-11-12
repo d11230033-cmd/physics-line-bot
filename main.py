@@ -1,8 +1,8 @@
-# --- 「神殿」：AI 宗師的核心 (第二十一紀元：Vertex AI 遷移版) ---
+# --- 「神殿」：AI 宗師的核心 (第二十紀元：最終穩定版) ---
 #
-# SDK：★「全新」 google-cloud-aiplatform (Vertex AI) ★
-# 修正：21. ★ (架構遷移) 遷移到 Vertex AI，解鎖 Imagen 3 繪圖功能 ★
-# 修正：22. ★ (繪圖修正) 使用「精確」的 imagen-3.0-generate-002 模型 ★
+# SDK：★「還原」 google-genai (PS5 SDK) ★
+# 修正：19. ★ (一致性修正) 將程式碼中所有 "AI 宗師" 替換為 "JYM助教" ★
+# 修正：20. ★ (穩定性修正) 移除不相容的「繪圖」功能，修復所有 Bug ★
 # -----------------------------------
 
 import os
@@ -10,21 +10,21 @@ import pathlib
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, ImageMessage, AudioMessage, TextSendMessage, ImageSendMessage 
+# ★ (還原) 移除 ImageSendMessage，因為我們不繪圖
+from linebot.models import MessageEvent, TextMessage, ImageMessage, AudioMessage, TextSendMessage
 
-# --- ★ (新) Vertex AI SDK ★ ---
-import vertexai
-from vertexai.generative_models import GenerativeModel, Part, Image # 移除了 .preview
-from vertexai.vision_models import ImageGenerationModel         # 移除了 .preview (並修正路徑)
-from vertexai.language_models import TextEmbeddingModel
+# --- ★ (還原) 第十四紀元：全新 SDK ★ ---
+from google import genai
+from google.genai import types
+from google.genai.types import HarmCategory, HarmBlockThreshold
 
-from PIL import Image as PILImage
+from PIL import Image
 import io
 import psycopg2 # 藍圖三：資料庫工具
 import json     # 藍圖三：資料庫工具
 import datetime # ★ 第七紀元：需要時間戳
 import time     # ★ (新功能) 為了「自動重試」
-import threading # ★ (新功能) 為了「非同步」繪圖
+# ★ (移除) import threading
 
 # --- ★ (還原) 第八紀元：永恆檔案館工具 ★ ---
 import cloudinary
@@ -46,30 +46,22 @@ CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME')
 CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY')
 CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET')
 
-# ★ (新) Vertex AI 專案金鑰 ★
-GCP_PROJECT_ID = os.environ.get('GCP_PROJECT_ID')
-GCP_LOCATION = os.environ.get('GCP_LOCATION')
+# ★ (移除) Vertex AI 專案金鑰 ★
+# GCP_PROJECT_ID = ...
+# GCP_LOCATION = ...
 
 # --- 步驟二：神殿的基礎建設 ---
 app = Flask(__name__)
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# --- ★ (新) 連接 Vertex AI (神之鍛造廠) ★ ---
+# --- ★ (還原) 第十四紀元：連接「神之鍛造廠」(Gemini PS5) ★ ---
 try:
-    if not GCP_PROJECT_ID or not GCP_LOCATION:
-        raise ValueError("GCP_PROJECT_ID 和 GCP_LOCATION 環境變數尚未設定！")
-    
-    # 讀取 Render 上的 Secret File ('service_account.json')
-    CREDS = Credentials.from_service_account_file('service_account.json')
-    print("--- (Vertex AI) 成功讀取 service_account.json ---")
-
-    vertexai.init(project=GCP_PROJECT_ID, location=GCP_LOCATION, credentials=CREDS)
-    print(f"--- (Vertex AI) ★ Vertex AI SDK 連接成功！專案：{GCP_PROJECT_ID}, 位置：{GCP_LOCATION} ★ ---")
-
+    client = genai.Client()
+    print("--- (Gemini) ★ 第十四紀元：PS5 SDK (google-genai) 連接成功！ ★ ---")
 except Exception as e:
-    print(f"!!! 嚴重錯誤：無法初始化 Vertex AI。錯誤：{e}")
-    print("    (★ 提醒：請檢查 IAM 權限是否已新增 `Vertex AI User` 和 `Storage Object Admin` ★)")
+    print(f"!!! 嚴重錯誤：無法設定 Google API Key (GEMINI_API_KEY)。錯誤：{e}")
+    client = None
 
 # --- ★ (還原) 第八紀元：連接「永恆檔案館」(Cloudinary) ★ ---
 try:
@@ -85,14 +77,14 @@ except Exception as e:
 
 # --- ★ (新功能) 連接 Google Sheets (★ 修正版：使用 KEY ★) ---
 try:
-    # (我們使用與 Vertex AI 相同的 CREDS)
+    # 1. 定義 API 範圍
     SCOPES = [
         'https://www.googleapis.com/auth/spreadsheets',
-        'https://www.googleapis.com/auth/drive.file'
+        'https://www.googleapis.com/auth/drive.file' # gspread 需要 drive.file 來「搜尋」檔案
     ]
-    # ★ 重新加上 Scopes
-    CREDS_WITH_SCOPES = CREDS.with_scopes(SCOPES)
-    gc = gspread.authorize(CREDS_WITH_SCOPES)
+    # 2. 讀取 Render 上的 Secret File ('service_account.json')
+    CREDS = Credentials.from_service_account_file('service_account.json', scopes=SCOPES)
+    gc = gspread.authorize(CREDS)
     
     # 3. ★★★ (新修正 + 請修改) 使用您試算表的「金鑰 (Key)」 ★★★
     # (請貼上您在「步驟一」從網址列複製的那串金鑰)
@@ -113,12 +105,11 @@ except Exception as e:
 TTS_CLIENT = None
 print("--- (TTS) 語音輸出功能已移除，確保系統穩定 ---")
 
-# --- ★ (新) Vertex AI 模型定義 ★ ---
-CHAT_MODEL_NAME = 'gemini-2.5-pro'
-VISION_MODEL_NAME = 'gemini-2.5-flash-image'
-EMBEDDING_MODEL_NAME = 'text-embedding-004' # Vertex AI 上的模型名稱
-IMAGE_GEN_MODEL_NAME = 'imagen-3.0-generate-002' # ★ (修正) 使用您找到的「精確」模型 ★
-VECTOR_DIMENSION = 768
+# --- ★ (還原) 第十五紀元：定義「雙重專家」模型 (★ 移除繪圖 ★) ---
+CHAT_MODEL = 'gemini-2.5-pro'           # ★ (還原) 使用 2.5-Pro (穩定版)
+VISION_MODEL = 'gemini-2.5-flash-image'       # ★ (還原) 使用 2.5-flash-image (穩定版)
+EMBEDDING_MODEL = 'models/text-embedding-004' # (保持不變，這是標準)
+VECTOR_DIMENSION = 768 # ★ 向量維度 768
 
 # --- 步驟四：AI 宗師的「靈魂」核心 (★ Persona 升級 ★) ---
 system_prompt = """
@@ -136,18 +127,7 @@ system_prompt = """
 4.  **「絕對禁止」** 說出「答案是...」或「你應該要...」。
 5.  **「絕對必須」**：你「所有」的回應「必須」 100% 使用「繁體中文」(台灣用語)。「絕對禁止」使用「簡體中文」。
 
-# --- ★ 「繪圖魔法」指令 (Vertex AI 版) ★ ---
-* **你可以生成圖片。** 當你判斷「一張圖」會比「純文字」更能幫助學生理解**物理概念、力圖、運動軌跡、光學路徑、電路圖、圖表關係或任何幾何概念**時，你「必須」在回應中**「使用圖像生成標籤」**。
-* **生成圖片的格式：** 在你希望生成圖片的地方，插入這個標籤：`{draw:<圖片的詳細描述>}`。
-* **範例：**
-    * 如果你想畫一個自由落體的示意圖：`{draw:一個從高處自由落下的球，旁邊有重力向量向下}`
-    * 如果你想畫一個電路圖：`{draw:一個包含電池、燈泡和開關的簡單串聯電路圖}`
-    * 如果你想畫一個速度時間圖：`{draw:一個橫軸為時間(t)縱軸為速度(v)的速度時間圖，顯示物體以等加速度從靜止開始加速的直線}`
-* **限制：** 你**一次對話中「最多」只能生成一張圖片**。如果已經生成過圖片，就不要再生成。
-* **圖片描述要求：**
-    * **「必須」** 使用「繁體中文」。
-    * **「必須」** 盡可能「詳細」、「具體」，描述圖片的「核心物理元素」和「關係」。
-    * **「絕對禁止」** 在 `draw:` 後面加入任何「非描述性」的內容 (例如：「請畫」、「宗師畫圖」)。
+# --- ★ 「繪圖魔法」指令 (★ 已移除 ★) ---
 
 # --- ★ 「第十二紀元：中文指令」核心邏輯 ★ ---
 # 這是你最重要的思考流程！
@@ -178,7 +158,8 @@ system_prompt = """
 
     3.  **【內心思考 - 步驟 3：分支應對 (★ 關鍵 ★)】**
         * **【B1. 如果學生「答對了」】:**
-            * 「太棒了！學生答對了。我的回應『必須』：1. 肯定他（例如：『完全正確！』、『沒錯！』）。 2. 總結我們剛剛的發現。 3. 提出『下一個』合乎邏輯的蘇格拉底式問題。」
+            * 「太棒了！學生答對了。我的回應『必須』：1. 肯d
+ing他（例如：『完全正確！』、『沒錯！』）。 2. 總結我們剛剛的發現。 3. 提出『下一個』合乎邏輯的蘇格拉底式問題。」
         * **【B2. 如果學生「答錯了」】:**
             * 「啊，學生答錯了。他以為是『...』，但正確答案是『...』。」
             * 「我的回應『必須』是：1. 用『溫和、鼓勵』的方式，『委婉地指出』他的答案『可能需要重新思考』。」
@@ -195,33 +176,28 @@ system_prompt = """
     * **4. (產生類題):** 你「必須」立刻「產生一個」與剛剛題目「概念相似，但數字或情境不同」的「新類題」。
 """
 
-# --- ★ (新) Vertex AI 安全設定 ★ ---
-from vertexai.generative_models import HarmCategory as VertexHarmCategory, HarmBlockThreshold as VertexHarmBlockThreshold # 移除了 .preview
-
-safety_settings = {
-    VertexHarmCategory.HARM_CATEGORY_HATE_SPEECH: VertexHarmBlockThreshold.BLOCK_NONE,
-    VertexHarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: VertexHarmBlockThreshold.BLOCK_NONE,
-    VertexHarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: VertexHarmBlockThreshold.BLOCK_NONE,
-    VertexHarmCategory.HARM_CATEGORY_HARASSMENT: VertexHarmBlockThreshold.BLOCK_NONE,
-}
-
-# 初始化 Vertex AI 模型
-try:
-    # vvvv ★ AI 核心人格 (System Prompt) 在此注入 vvvv
-    chat_model = GenerativeModel(
-        CHAT_MODEL_NAME, 
-        safety_settings=safety_settings,
-        system_instruction=system_prompt
-    )
- # (視覺模型不需要，它有自己的 vision_prompt)
-    vision_model = GenerativeModel(VISION_MODEL_NAME, safety_settings=safety_settings)
-    embedding_model = TextEmbeddingModel.from_pretrained(EMBEDDING_MODEL_NAME)
-    image_gen_model = ImageGenerationModel.from_pretrained(IMAGE_GEN_MODEL_NAME)
-    print(f"--- (Vertex AI) 所有 AI 專家 (Pro, Flash, Embedding, Imagen) 均已成功初始化！ ---")
-except Exception as e:
-    print(f"!!! 嚴重錯誤：初始化 Vertex AI 模型失敗。錯誤：{e}")
-    chat_model = None # 禁用
-
+# --- ★ (還原) 第十四紀元：定義「PS5」的「設定」 ★ ---
+generation_config = types.GenerateContentConfig(
+    system_instruction=system_prompt,
+    safety_settings=[
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold=types.HarmBlockThreshold.BLOCK_NONE,
+        ),
+    ]
+)
 
 # --- 步驟七：連接「外部大腦」(Neon 資料庫) (★ 無需變更 ★) ---
 # (此區塊所有函式都無需變更)
@@ -265,10 +241,10 @@ def initialize_database():
         finally:
             conn.close()
 
-# --- ★ (新) Vertex AI 版 `get_chat_history` ★ ---
+# --- ★ (還原) `google-genai` 版 `get_chat_history` ★ ---
 def get_chat_history(user_id):
     conn = get_db_connection()
-    history_list = [] # ★ Vertex AI 需要 `Content` 物件列表
+    history_list = [] 
     if conn:
         try:
             with conn.cursor() as cur:
@@ -276,39 +252,30 @@ def get_chat_history(user_id):
                 result = cur.fetchone()
                 if result and result[0]:
                     history_json = result[0]
-                    # ★ 重建 Vertex AI 的 Content 列表
                     for item in history_json:
                         role = item.get('role', 'user')
-                        # ★ Vertex AI 的角色是 'user' 和 'model'
                         parts_text = item.get('parts', [])
-                        if (role == 'user' or role == 'model') and parts_text:
-                            # 過濾掉 {draw:...} 標籤，只保留純文字的部分
-                            filtered_parts = [p for p in parts_text if not p.strip().startswith('{draw:')]
-                            if filtered_parts:
-                                # ★ Vertex AI 的 Part 物件
-                                history_list.append(Part.from_text("\n".join(filtered_parts)))
-                                history_list[-1].role = role # 手動設定角色
+                        # ★ (移除) 繪圖標籤過濾
+                        if role == 'user' or role == 'model':
+                            history_list.append(types.Content(role=role, parts=[types.Part.from_text(text=text) for text in parts_text]))
         except Exception as e:
             print(f"!!! 錯誤：無法讀取 user_id '{user_id}' 的歷史紀錄。錯誤：{e}")
         finally:
-            if conn: conn.close()
+            conn.close()
     return history_list 
 
-# --- ★ (新) Vertex AI 版 `save_chat_history` ★ ---
+# --- ★ (還原) `google-genai` 版 `save_chat_history` ★ ---
 def save_chat_history(user_id, chat_session):
     conn = get_db_connection()
     if conn:
         try:
             history_to_save = []
-            # ★ Vertex AI 的語法是 .history
-            history = chat_session.history 
+            history = chat_session.get_history() # ★ (還原)
             if history:
                 for message in history:
-                    # (我們只儲存 user 和 model 的對話)
                     if message.role == 'user' or message.role == 'model':
                         parts_text = [part.text for part in message.parts if hasattr(part, 'text')]
                         history_to_save.append({'role': message.role, 'parts': parts_text})
-
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO chat_history (user_id, history) VALUES (%s, %s)
@@ -318,19 +285,22 @@ def save_chat_history(user_id, chat_session):
         except Exception as e:
             print(f"!!! 錯誤：無法儲存 user_id '{user_id}' 的歷史紀錄。錯誤：{e}")
         finally:
-            if conn: conn.close()
+            conn.close()
 
-# --- ★ (新) Vertex AI 版 `find_relevant_chunks` ★ ---
+# --- ★ (還原) `google-genai` 版 `find_relevant_chunks` ★ ---
 def find_relevant_chunks(query_text, k=3):
     conn = None
-    if not embedding_model: return "N/A"
+    if not client: return "N/A" # ★ (還原)
     try:
         cleaned_query_text = query_text.replace('\x00', '')
-        print(f"--- (RAG) 正在為問題「{cleaned_query_text[:20]}...」向 Vertex AI 請求向量... ---")
+        print(f"--- (RAG) 正在為問題「{cleaned_query_text[:20]}...」向 Gemini 請求向量... ---")
         
-        # ★ Vertex AI 的語法
-        result = embedding_model.get_embeddings([cleaned_query_text])
-        query_vector = result[0].values 
+        # ★ (還原)
+        result = client.models.embed_content(
+            model=EMBEDDING_MODEL,
+            contents=[cleaned_query_text] 
+        )
+        query_vector = result.embeddings[0].values 
 
         print("--- (RAG) 正在連接資料庫以搜尋向量... ---")
         conn = get_db_connection()
@@ -390,55 +360,7 @@ def save_to_research_log(user_id, user_msg_type, user_content, image_url, vision
             print(f"!!! 嚴重錯誤：無法寫入 Google Sheets。錯誤：{e}")
 
 
-# --- ★ (新) Vertex AI 版：在「背景」繪圖 (使用 Imagen 3) ★ ---
-def generate_and_push_image(user_id, draw_command):
-    if not image_gen_model:
-        print("!!! (背景) 錯誤：Imagen 3 模型未初始化。")
-        line_bot_api.push_message(user_id, TextSendMessage(text="抱歉，JYM助教的繪圖核心未啟動。"))
-        return
-        
-    try:
-        print(f"--- (繪圖魔法 - 背景) JYM助教請求繪圖：'{draw_command}' (使用 {IMAGE_GEN_MODEL_NAME}) ---")
-        
-        # ★ (新) Vertex AI Imagen 3 語法 ★
-        image_gen_response = image_gen_model.generate_images(
-            prompt=f"一張關於'{draw_command}'的物理教學示意圖。風格簡潔、清晰、易於理解，適合高中生。繁體中文。",
-            number_of_images=1
-        )
-        
-        if image_gen_response.images:
-            image_data = image_gen_response.images[0]._image_bytes # 取得圖片的位元組
-            
-            print("--- (繪圖魔法 - 背景) 正在上傳生成的圖片到 Cloudinary... ---")
-            upload_gen_image_result = cloudinary.uploader.upload(
-                io.BytesIO(image_data),
-                resource_type="image",
-                folder="ai_guru_generated_images" 
-            )
-            generated_image_url = upload_gen_image_result.get('secure_url')
-            
-            if generated_image_url:
-                print(f"--- (繪圖魔法 - 背景) 圖片生成並上傳成功！URL: {generated_image_url} ---")
-                
-                # ★★★ 使用 PUSH_MESSAGE (推送訊息) ★★★
-                line_bot_api.push_message(
-                    user_id,
-                    ImageSendMessage(
-                        original_content_url=generated_image_url,
-                        preview_image_url=generated_image_url
-                    )
-                )
-            else:
-                print("!!! (背景) 錯誤：生成的圖片上傳 Cloudinary 失敗。")
-                line_bot_api.push_message(user_id, TextSendMessage(text="抱歉，JYM助教試圖畫一張圖，但目前畫不出來。"))
-        else:
-            print("!!! (背景) 錯誤：Imagen 3 圖像生成回應為空。")
-            line_bot_api.push_message(user_id, TextSendMessage(text="抱歉，JYM助教試圖畫一張圖，但目前畫不出來。"))
-    
-    except Exception as gen_image_e:
-        print(f"!!! (背景) 嚴重錯誤：圖像生成或上傳失敗。錯誤：{gen_image_e}")
-        line_bot_api.push_message(user_id, TextSendMessage(text="抱歉，JYM助教試圖畫一張圖，但目前遇到了一些困難。"))
-
+# ★ (移除) 背景繪圖函式 ★
 
 initialize_database()
 
@@ -453,15 +375,16 @@ def callback():
         abort(400)
     return 'OK'
 
-# --- 步驟九：神殿的「主控室」(處理訊息) (★ 遷移到 Vertex AI ★) ---
+# --- 步驟九：神殿的「主控室」(處理訊息) (★ 還原版：移除繪圖 ★) ---
 @handler.add(MessageEvent, message=(TextMessage, ImageMessage, AudioMessage)) # ★ 支援 AudioMessage ★
 def handle_message(event):
 
     user_id = event.source.user_id
 
-    if not chat_model:
-        print("!!! 嚴重錯誤：Vertex AI Client 未初始化！(金鑰或權限可能錯誤)")
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="抱歉，JYM助教目前金鑰遺失，請檢查 Render 環境變數。"))
+    if not client: # ★ (還原)
+        print("!!! 嚴重錯誤：Gemini Client 未初始化！(金鑰可能錯誤)")
+        # ★ (一致性修正)
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="抱歉，JYM助教目前金鑰遺失，請檢查 Render 環境變數 `GEMINI_API_KEY`。"))
         return
 
     # --- ★ 第八紀元：初始化研究日誌變數 ★ ---
@@ -473,31 +396,21 @@ def handle_message(event):
     final_response_text = "" # AI 的原始文字回應 (用於日誌)
     line_replies = []        # 準備傳送給 LINE 的訊息列表
     
-    # ★ (新功能) 判斷是否已經生成過圖片，避免重複生成 ★
-    generated_image_in_this_session = False 
-    
     # 1. 讀取「過去的記憶」
     past_history = get_chat_history(user_id)
 
-    # 2. 根據「記憶」開啟「對話宗師」的對話
+    # 2. 根據「過去的記憶」開啟「對話」
     try:
-         # ★ (新) Vertex AI 語法
-         chat_session = chat_model.start_chat(
-             history=past_history
-             # ------------------------------------
-             # (已移除 generation_config)
-             # ------------------------------------
+         # ★ (還原) `google-genai` 語法
+         chat_session = client.chats.create(
+             model=CHAT_MODEL, 
+             history=past_history, 
+             config=generation_config 
          )
-
     except Exception as start_chat_e:
          print(f"!!! 警告：從歷史紀錄開啟對話失敗。使用空對話。錯誤：{start_chat_e}")
-         chat_session = chat_model.start_chat(
-             history=[]
-             # ------------------------------------
-             # (已移除 generation_config)
-             # ------------------------------------
-         )
-  
+         chat_session = client.chats.create(model=CHAT_MODEL, history=[], config=generation_config)
+
     # 3. 準備「當前的輸入」(★ 三位一體專家系統 ★)
     contents_to_send = []
     user_question = "" 
@@ -523,9 +436,8 @@ def handle_message(event):
                 print(f"!!! 嚴重錯誤：Cloudinary 圖片上傳失敗。錯誤：{upload_e}")
                 image_url_to_save = f"upload_error: {upload_e}"
 
-            print(f"--- (視覺專家) 正在分析圖片 (使用 {VISION_MODEL_NAME})... ---")
-            # ★ (新) Vertex AI 語法
-            img = Image(image_bytes)
+            print(f"--- (視覺專家) 正在分析圖片 (使用 {VISION_MODEL})... ---")
+            img = PILImage.open(io.BytesIO(image_bytes)) # ★ (還原)
 
             vision_prompt = """
             你是一個「精準的」光學掃描儀 (OCR) 和「圖表分析」工具。
@@ -548,10 +460,11 @@ def handle_message(event):
                 * 「2. 客觀地」描述他的計算步驟，**「不要」**自己下判斷。
             請直接開始你的「客觀描述」。
             """
-
-            vision_response = vision_model.generate_content(
-                [img, vision_prompt]
-                # (generation_config 已移除，因為模型初始化時已設定)
+            
+            # ★ (還原)
+            vision_response = client.models.generate_content(
+                model=VISION_MODEL, 
+                contents=[img, vision_prompt] 
             )
             vision_analysis = vision_response.text 
             print(f"--- (視覺專家) 分析完畢：{vision_analysis[:70]}... ---")
@@ -568,8 +481,8 @@ def handle_message(event):
             message_content = line_bot_api.get_message_content(event.message.id)
             audio_bytes = message_content.content
             
-            # ★ (新) Vertex AI 語法
-            audio_file = Part.from_data(data=audio_bytes, mime_type='audio/m4a')
+            # ★ (還原)
+            audio_file = types.Part.from_data(data=audio_bytes, mime_type='audio/m4a')
 
             audio_prompt = """
             你是一個「精準的」聽打員和「語氣分析師」。
@@ -587,9 +500,10 @@ def handle_message(event):
             」
             """
             
-            speech_response = chat_model.generate_content(
-                [audio_file, audio_prompt]
-                # (generation_config 已移除，因為模型初始化時已設定)
+            # ★ (還原)
+            speech_response = client.models.generate_content(
+                model=CHAT_MODEL, 
+                contents=[audio_file, audio_prompt]
             )
             
             vision_analysis = speech_response.text 
@@ -618,17 +532,17 @@ def handle_message(event):
         contents_to_send = [rag_prompt.replace("{rag_content}", "{rag_context}")]
 
         # --- ★ AI 宗師：「對話宗師」啟動 (★ 第十七紀元：加入自動重試) ★ ---
-        print(f"--- (對話宗師) 正在呼叫 Vertex AI ({CHAT_MODEL_NAME})... ---")
+        print(f"--- (對話宗師) 正在呼叫 Gemini API ({CHAT_MODEL})... ---") # ★ (還原)
         
         max_retries = 2 
         attempt = 0
         
         while attempt < max_retries:
             try:
-                # ★ (新) Vertex AI 語法
+                # ★ (還原)
                 response = chat_session.send_message(contents_to_send)
                 final_response_text = response.text 
-                print(f"--- (對話宗師) Vertex AI 回應成功 (嘗試第 {attempt + 1} 次) ---")
+                print(f"--- (對話宗師) Gemini API 回應成功 (嘗試第 {attempt + 1} 次) ---")
                 break 
 
             except Exception as chat_api_e:
@@ -642,48 +556,25 @@ def handle_message(event):
                     print(f"!!! (對話宗師) 嚴重錯誤：重試 {max_retries} 次後仍然失敗。")
                     raise chat_api_e 
         
-        # --- ★ (新功能) 圖像生成邏輯 (★ 修正版：非同步 ★) ---
-        if "{draw:" in final_response_text and not generated_image_in_this_session:
-            start_index = final_response_text.find("{draw:")
-            end_index = final_response_text.find("}", start_index)
-            
-            if start_index != -1 and end_index != -1:
-                draw_command = final_response_text[start_index + len("{draw:"):end_index].strip()
-                final_response_text_without_draw = final_response_text.replace(final_response_text[start_index:end_index+1], "").strip()
-                
-                print(f"--- (繪圖魔法) 偵測到繪圖指令：'{draw_command}' ---")
-                
-                instant_reply_text = f"好的，JYM助教正在為您繪製「{draw_command}」，請稍候..."
-                
-                if final_response_text_without_draw:
-                    instant_reply_text += f"\n\n{final_response_text_without_draw}"
-                
-                line_replies.append(TextSendMessage(text=instant_reply_text.replace('\x00', '')))
-                
-                print(f"--- (繪圖魔法) 正在啟動背景執行緒來繪圖... ---")
-                # ★ (新) 我們呼叫的是新版 Vertex AI 繪圖函式
-                thread = threading.Thread(target=generate_and_push_image, args=(user_id, draw_command))
-                thread.start()
-
-                generated_image_in_this_session = True 
-                
-            else: # 標籤不完整，當成普通文字處理
-                line_replies.append(TextSendMessage(text=final_response_text.replace('\x00', '')))
+        # ★ (移除) 圖像生成邏輯 ★
         
-        if not generated_image_in_this_session:
-            line_replies.append(TextSendMessage(text=final_response_text.replace('\x00', '')))
+        # ★ (還原) 繪圖功能已移除，我們只需要一個 final_text
+        line_replies.append(TextSendMessage(text=final_response_text.replace('\x00', '')))
         
         # 5. 儲存「更新後的記憶」(AI 記憶)
         print(f"--- (記憶) 正在儲存 user_id '{user_id}' 的對話紀錄... ---")
         save_chat_history(user_id, chat_session)
         print(f"--- (記憶) 對話紀錄儲存成功 ---")
         
+        # ★ (移除) 語音合成 (TTS) 邏輯 ★
+
     except Exception as e:
-        print(f"!!! 嚴重錯誤：Vertex AI 呼叫或資料庫/RAG/視覺/聽覺/繪圖操作失敗。錯誤：{e}")
+        print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG/視覺/聽覺操作失敗。錯誤：{e}")
+        # ★ (一致性修正)
         final_response_text = "抱歉，JYM助教目前正在檢索記憶/教科書或冥想中，請稍後再試。"
         if not user_content: user_content = "Error during processing"
         if not user_message_type: user_message_type = "error"
-        line_replies = [TextSendMessage(text=final_response_text)] 
+        line_replies = [TextSendMessage(text=final_response_text)] # 確保有錯誤訊息回覆
 
     # ★★★【第八紀元：最終儲存】★★★
     # 6. 儲存「研究日誌」(人類研究)
@@ -695,10 +586,10 @@ def handle_message(event):
         image_url=image_url_to_save.replace('\x00', ''), 
         vision_analysis=vision_analysis.replace('\x00', ''), 
         rag_context=rag_context.replace('\x00', ''),
-        ai_response=final_response_text.replace('\x00', '') 
+        ai_response=final_response_text.replace('\x00', '') # ★ (修正) 儲存 AI 的原始文字回應
     )
 
-    # 7. 回覆使用者 (★ 現在只回覆「請稍候...」或「純文字」)
+    # 7. 回覆使用者 (★ 還原)
     line_bot_api.reply_message(
         event.reply_token, 
         line_replies 
