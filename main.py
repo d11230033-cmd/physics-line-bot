@@ -120,6 +120,16 @@ EMBEDDING_MODEL_NAME = 'text-embedding-004' # Vertex AI 上的模型名稱
 IMAGE_GEN_MODEL_NAME = 'imagen-3.0-generate-002' # ★ (修正) 使用您找到的「精確」模型 ★
 VECTOR_DIMENSION = 768
 
+# --- ★ (新) Vertex AI 安全設定 ★ ---
+from vertexai.generative_models import HarmCategory as VertexHarmCategory, HarmBlockThreshold as VertexHarmBlockThreshold # 移除了 .preview
+
+safety_settings = {
+    VertexHarmCategory.HARM_CATEGORY_HATE_SPEECH: VertexHarmBlockThreshold.BLOCK_NONE,
+    VertexHarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: VertexHarmBlockThreshold.BLOCK_NONE,
+    VertexHarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: VertexHarmBlockThreshold.BLOCK_NONE,
+    VertexHarmCategory.HARM_CATEGORY_HARASSMENT: VertexHarmBlockThreshold.BLOCK_NONE,
+}
+
 # 初始化 Vertex AI 模型
 try:
     # vvvv ★ AI 核心人格 (System Prompt) 在此注入 vvvv
@@ -211,16 +221,6 @@ system_prompt = """
     * **3. (提供類題):** 在筆記之後，你「必須」接著說：「接下來，這裡有一題「類似題」，請你試著解解看：」
     * **4. (產生類題):** 你「必須」立刻「產生一個」與剛剛題目「概念相似，但數字或情境不同」的「新類題」。
 """
-
-# --- ★ (新) Vertex AI 安全設定 ★ ---
-from vertexai.generative_models import HarmCategory as VertexHarmCategory, HarmBlockThreshold as VertexHarmBlockThreshold # 移除了 .preview
-
-safety_settings = {
-    VertexHarmCategory.HARM_CATEGORY_HATE_SPEECH: VertexHarmBlockThreshold.BLOCK_NONE,
-    VertexHarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: VertexHarmBlockThreshold.BLOCK_NONE,
-    VertexHarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: VertexHarmBlockThreshold.BLOCK_NONE,
-    VertexHarmCategory.HARM_CATEGORY_HARASSMENT: VertexHarmBlockThreshold.BLOCK_NONE,
-}
 
 # --- 步驟七：連接「外部大腦」(Neon 資料庫) (★ 無需變更 ★) ---
 # (此區塊所有函式都無需變更)
