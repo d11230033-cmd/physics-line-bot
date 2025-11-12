@@ -481,8 +481,8 @@ def handle_message(event):
             message_content = line_bot_api.get_message_content(event.message.id)
             audio_bytes = message_content.content
             
-            # ★ (還原)
-            audio_file = types.Part.from_data(data=audio_bytes, mime_type='audio/m4a')
+            # ★ (還原) ★ 修正：使用 types.Blob 來封裝原始數據 ★
+            audio_file = types.Part(inline_data=types.Blob(data=audio_bytes, mime_type='audio/m4a'))
 
             audio_prompt = """
             你是一個「精準的」聽打員和「語氣分析師」。
