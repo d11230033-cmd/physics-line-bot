@@ -112,7 +112,7 @@ IMAGE_GEN_MODEL = 'gemini-2.5-flash-image' # ★ (繪圖復活) 現在它也可�
 EMBEDDING_MODEL = 'models/text-embedding-004' # (保持不變，這是標準)
 VECTOR_DIMENSION = 768 # ★ 向量維度 768
 
-# --- 步驟四：AI 宗師的「靈魂」核心 (★ 重新啟用繪圖指令 ★) ---
+# --- 步驟四：JYM物理AI助教 的「靈魂」核心 (★ 重新啟用繪圖指令 ★) ---
 system_prompt = """
 你是一位頂尖大學的物理系博士，你對於高中物理教師甄試筆試與物理奧林匹亞競賽非常擅長而且是專家等級，你目前是頂尖台灣高中物理教師，你對於高中物理的知識與專業無庸置疑，更是頂尖台灣高中物理教學AI，叫做「JYM物理AI助教」。
 你的教學風格是「蘇格拉底式評估法」(Socratic Evaluator)。
@@ -139,7 +139,7 @@ system_prompt = """
 * **圖片描述要求：**
     * **「必須」** 使用「繁體中文」。
     * **「必須」** 盡可能「詳細」、「具體」，描述圖片的「核心物理元素」和「關係」。
-    * **「絕對禁止」** 在 `draw:` 後面加入任何「非描述性」的內容 (例如：「請畫」、「宗師畫圖」)。
+    * **「絕對禁止」** 在 `draw:` 後面加入任何「非描述性」的內容 (例如：「請畫」、「JYM物理AI助教畫圖」)。
 
 # --- ★ 「第十二紀元：中文指令」核心邏輯 ★ ---
 # 這是你最重要的思考流程！
@@ -403,14 +403,14 @@ def generate_and_push_image(user_id, draw_command):
                 )
             else:
                 print("!!! (背景) 錯誤：生成的圖片上傳 Cloudinary 失敗。")
-                line_bot_api.push_message(user_id, TextSendMessage(text="抱歉，宗師試圖畫一張圖，但目前畫不出來。"))
+                line_bot_api.push_message(user_id, TextSendMessage(text="抱歉，JYM物理AI助教試圖畫一張圖，但目前畫不出來。"))
         else:
             print("!!! (背景) 錯誤：gemini-2.5-flash-image 圖像生成回應為空或不是圖片。")
-            line_bot_api.push_message(user_id, TextSendMessage(text="抱歉，宗師試圖畫一張圖，但目前畫不出來。"))
+            line_bot_api.push_message(user_id, TextSendMessage(text="抱歉，JYM物理AI助教試圖畫一張圖，但目前畫不出來。"))
     
     except Exception as gen_image_e:
         print(f"!!! (背景) 嚴重錯誤：圖像生成或上傳失敗。錯誤：{gen_image_e}")
-        line_bot_api.push_message(user_id, TextSendMessage(text="抱歉，宗師試圖畫一張圖，但目前遇到了一些困難。"))
+        line_bot_api.push_message(user_id, TextSendMessage(text="抱歉，JYM物理AI助教試圖畫一張圖，但目前遇到了一些困難。"))
 
 
 initialize_database()
@@ -434,7 +434,7 @@ def handle_message(event):
 
     if not client:
         print("!!! 嚴重錯誤：Gemini Client 未初始化！(金鑰可能錯誤)")
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="抱歉，宗師目前金鑰遺失，請檢查 Render 環境變數 `GEMINI_API_KEY`。"))
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="抱歉，JYM物理AI助教目前金鑰遺失，請檢查 Render 環境變數 `GEMINI_API_KEY`。"))
         return
 
     # --- ★ 第八紀元：初始化研究日誌變數 ★ ---
@@ -452,7 +452,7 @@ def handle_message(event):
     # 1. 讀取「過去的記憶」
     past_history = get_chat_history(user_id)
 
-    # 2. 根據「記憶」開啟「對話宗師」的對話
+    # 2. 根據「記憶」開啟「對話JYM物理AI助教」的對話
     try:
          chat_session = client.chats.create(
              model=CHAT_MODEL, 
@@ -585,8 +585,8 @@ def handle_message(event):
         """
         contents_to_send = [rag_prompt.replace("{rag_content}", "{rag_context}")]
 
-        # --- ★ JYM物理AI助教：「對話宗師」啟動 (★ 第十七紀元：加入自動重試) ★ ---
-        print(f"--- (對話宗師) 正在呼叫 Gemini API ({CHAT_MODEL})... ---")
+        # --- ★ JYM物理AI助教：「對話JYM物理AI助教」啟動 (★ 第十七紀元：加入自動重試) ★ ---
+        print(f"--- (對話JYM物理AI助教) 正在呼叫 Gemini API ({CHAT_MODEL})... ---")
         
         max_retries = 2 
         attempt = 0
@@ -595,18 +595,18 @@ def handle_message(event):
             try:
                 response = chat_session.send_message(contents_to_send)
                 final_response_text = response.text # ★ AI 的原始回應
-                print(f"--- (對話宗師) Gemini API 回應成功 (嘗試第 {attempt + 1} 次) ---")
+                print(f"--- (對話JYM物理AI助教) Gemini API 回應成功 (嘗試第 {attempt + 1} 次) ---")
                 break 
 
             except Exception as chat_api_e:
                 attempt += 1
-                print(f"!!! (對話宗師) 警告：API 呼叫失敗 (第 {attempt} 次)。錯誤：{chat_api_e}")
+                print(f"!!! (對話JYM物理AI助教) 警告：API 呼叫失敗 (第 {attempt} 次)。錯誤：{chat_api_e}")
                 
                 if attempt < max_retries:
                     print(f"    ... 正在重試，等待 2 秒...")
                     time.sleep(2) 
                 else:
-                    print(f"!!! (對話宗師) 嚴重錯誤：重試 {max_retries} 次後仍然失敗。")
+                    print(f"!!! (對話JYM物理AI助教) 嚴重錯誤：重試 {max_retries} 次後仍然失敗。")
                     raise chat_api_e 
         
         # --- ★ (新功能) 圖像生成邏輯 (★ 修正版：非同步 ★) ---
@@ -621,7 +621,7 @@ def handle_message(event):
                 print(f"--- (繪圖魔法) 偵測到繪圖指令：'{draw_command}' ---")
                 
                 # 1. 立即回覆的文字
-                instant_reply_text = f"好的，宗師正在為您繪製「{draw_command}」，請稍候..."
+                instant_reply_text = f"好的，JYM物理AI助教正在為您繪製「{draw_command}」，請稍候..."
                 
                 # 2. 如果 AI 還有後續文字，先一起回覆
                 if final_response_text_without_draw:
@@ -654,7 +654,7 @@ def handle_message(event):
 
     except Exception as e:
         print(f"!!! 嚴重錯誤：Gemini API 呼叫或資料庫/RAG/視覺/聽覺/繪圖操作失敗。錯誤：{e}")
-        final_response_text = "抱歉，宗師目前正在檢索記憶/教科書或冥想中，請稍後再試。"
+        final_response_text = "抱歉，JYM物理AI助教目前正在檢索記憶/教科書或冥想中，請稍後再試。"
         if not user_content: user_content = "Error during processing"
         if not user_message_type: user_message_type = "error"
         line_replies = [TextSendMessage(text=final_text)] # 確保有錯誤訊息回覆
