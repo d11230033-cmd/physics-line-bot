@@ -2,7 +2,7 @@
 #
 # SDK：★「全新」 google-cloud-aiplatform (Vertex AI) ★
 # ... (之前的所有修正)
-# 修正：23. ★ (重大 Bug 修正) 修正 Vertex AI SDK 的 start_chat() TypeError ★
+# 修正：24. ★ (重大 Bug 修正) 修正 Vertex AI SDK 的 get_chat_history() AttributeError ★
 # -----------------------------------
 
 import os
@@ -14,7 +14,8 @@ from linebot.models import MessageEvent, TextMessage, ImageMessage, AudioMessage
 
 # --- ★ (新) Vertex AI SDK ★ ---
 import vertexai
-from vertexai.preview.generative_models import GenerativeModel, Part, Image
+# ★ (修正) 引入 Content
+from vertexai.preview.generative_models import GenerativeModel, Part, Image, Content 
 from vertexai.preview.vision_models import ImageGenerationModel
 from vertexai.language_models import TextEmbeddingModel
 
@@ -96,7 +97,6 @@ try:
     
     # 3. ★★★ (新修正 + 請修改) 使用您試算表的「金鑰 (Key)」 ★★★
     # (請貼上您在「步驟一」從網址列複製的那串金鑰)
-    SPREADSHEET_KEY = "1Evd8WACx_uDUl04c5x2jADFxgLl1A3jW2z0_RynTmhU" # ★★★ 在這裡貼上您的 KEY ★★★
     
     sh = gc.open_by_key(SPREADSHEET_KEY)
     
@@ -188,7 +188,8 @@ system_prompt = """
 
     3.  **【內心思考 - 步驟 3：分支應對 (★ 關鍵 ★)】**
         * **【B1. 如果學生「答對了」】:**
-            * 「太棒了！學生答對了。我的回應『必須』：1. 肯定他（例如：『完全正確！』、『沒錯！』）。 2. 總結我們剛剛的發現。 3. 提出『下一個』合乎邏輯的蘇格拉底式問題。」
+            * 「太棒了！學生答對了。我的回應『必須』：1. 肯d
+ing他（例如：『完全正確！』、『沒錯！』）。 2. 總結我們剛剛的發現。 3. 提出『下一個』合乎邏輯的蘇格拉底式問題。」
         * **【B2. 如果學生「答錯了」】:**
             * 「啊，學生答錯了。他以為是『...』，但正確答案是『...』。」
             * 「我的回應『必須』是：1. 用『溫和、鼓勵』的方式，『委婉地指出』他的答案『可能需要重新思考』。」
@@ -265,7 +266,7 @@ def initialize_database():
         finally:
             conn.close()
 
-# --- ★ (新) Vertex AI 版 `get_chat_history` ★ ---
+# --- ★ (新) Vertex AI 版 `get_chat_history` (★ 語法修正 ★) ---
 def get_chat_history(user_id):
     conn = get_db_connection()
     history_list = [] # ★ Vertex AI 需要 `Content` 物件列表
@@ -285,9 +286,10 @@ def get_chat_history(user_id):
                             # 過濾掉 {draw:...} 標籤，只保留純文字的部分
                             filtered_parts = [p for p in parts_text if not p.strip().startswith('{draw:')]
                             if filtered_parts:
-                                # ★ Vertex AI 的 Part 物件
-                                history_list.append(Part.from_text("\n".join(filtered_parts)))
-                                history_list[-1].role = role # 手動設定角色
+                                # ★ (修正) Vertex AI 需要的是 Content 物件
+                                role_to_use = "user" if role == "user" else "model"
+                                parts_to_use = [Part.from_text(text) for text in filtered_parts]
+                                history_list.append(Content(role=role_to_use, parts=parts_to_use))
         except Exception as e:
             print(f"!!! 錯誤：無法讀取 user_id '{user_id}' 的歷史紀錄。錯誤：{e}")
         finally:
@@ -479,7 +481,7 @@ def handle_message(event):
     # 1. 讀取「過去的記憶」
     past_history = get_chat_history(user_id)
 
-    # 2. 根據「記憶」開啟「對話宗師」的對話
+    # 2. 根據「過去的記憶」開啟「對話」
     try:
          # ★ (修正) Vertex AI 語法 ★
          chat_session = chat_model.start_chat(
@@ -627,18 +629,18 @@ def handle_message(event):
                 # ★ (新) Vertex AI 語法
                 response = chat_session.send_message(contents_to_send)
                 final_response_text = response.text 
-                print(f"--- (對話宗S) Vertex AI 回應成功 (嘗試第 {attempt + 1} 次) ---")
+                print(f"--- (對話宗師) Vertex AI 回應成功 (嘗試第 {attempt + 1} 次) ---")
                 break 
 
             except Exception as chat_api_e:
                 attempt += 1
-                print(f"!!! (對話宗S) 警告：API 呼叫失敗 (第 {attempt} 次)。錯誤：{chat_api_e}")
+                print(f"!!! (對話宗師) 警告：API 呼叫失敗 (第 {attempt} 次)。錯誤：{chat_api_e}")
                 
                 if attempt < max_retries:
                     print(f"    ... 正在重試，等待 2 秒...")
                     time.sleep(2) 
                 else:
-                    print(f"!!! (對話宗S) 嚴重錯誤：重試 {max_retries} 次後仍然失敗。")
+                    print(f"!!! (對話宗師) 嚴重錯誤：重試 {max_retries} 次後仍然失敗。")
                     raise chat_api_e 
         
         # --- ★ (新功能) 圖像生成邏輯 (★ 修正版：非同步 ★) ---
