@@ -123,13 +123,13 @@ VECTOR_DIMENSION = 768
 # 初始化 Vertex AI 模型
 try:
     # vvvv ★ AI 核心人格 (System Prompt) 在此注入 vvvv
-    chat_model = GenerativeModel(
-        CHAT_MODEL_NAME, 
-        safety_settings=safety_settings,
-        system_instruction=system_prompt
-    )
-    # (視覺模型不需要，它有自己的 vision_prompt)
-    vision_model = GenerativeModel(VISION_MODEL_NAME, safety_settings=safety_settings)
+    chat_model = GenerativeModel(
+        CHAT_MODEL_NAME, 
+        safety_settings=safety_settings,
+        system_instruction=system_prompt
+    )
+ # (視覺模型不需要，它有自己的 vision_prompt)
+    vision_model = GenerativeModel(VISION_MODEL_NAME, safety_settings=safety_settings)
     embedding_model = TextEmbeddingModel.from_pretrained(EMBEDDING_MODEL_NAME)
     image_gen_model = ImageGenerationModel.from_pretrained(IMAGE_GEN_MODEL_NAME)
     print(f"--- (Vertex AI) 所有 AI 專家 (Pro, Flash, Embedding, Imagen) 均已成功初始化！ ---")
