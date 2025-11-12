@@ -1,8 +1,8 @@
 # --- 「神殿」：AI 宗師的核心 (第二十一紀元：Vertex AI 遷移版) ---
 #
 # SDK：★「全新」 google-cloud-aiplatform (Vertex AI) ★
-# ... (之前的所有修正)
-# 修正：25. ★ (重大 Bug 修正) 404 Model Not Found -> 降級至 1.5 Pro/Flash (GA 穩定版) ★
+# 修正：21. ★ (架構遷移) 遷移到 Vertex AI，解鎖 Imagen 3 繪圖功能 ★
+# 修正：22. ★ (繪圖修正) 使用「精確」的 imagen-3.0-generate-002 模型 ★
 # -----------------------------------
 
 import os
@@ -14,8 +14,7 @@ from linebot.models import MessageEvent, TextMessage, ImageMessage, AudioMessage
 
 # --- ★ (新) Vertex AI SDK ★ ---
 import vertexai
-# ★ (修正) 引入 Content
-from vertexai.preview.generative_models import GenerativeModel, Part, Image, Content 
+from vertexai.preview.generative_models import GenerativeModel, Part, Image
 from vertexai.preview.vision_models import ImageGenerationModel
 from vertexai.language_models import TextEmbeddingModel
 
@@ -115,22 +114,22 @@ TTS_CLIENT = None
 print("--- (TTS) 語音輸出功能已移除，確保系統穩定 ---")
 
 # --- ★ (新) Vertex AI 模型定義 ★ ---
-# ★ (修正) 降級至 GA (General Availability) 穩定版模型 ★
-CHAT_MODEL_NAME = 'gemini-2.5-pro'         # ★ 修正
-VISION_MODEL_NAME = 'gemini-2.5-flash-image'       # ★ 修正
-EMBEDDING_MODEL_NAME = 'text-embedding-004'    # (OK)
-IMAGE_GEN_MODEL_NAME = 'imagen-3.0-generate-002' # (OK)
+CHAT_MODEL_NAME = 'gemini-2.5-pro'
+VISION_MODEL_NAME = 'gemini-2.5-flash-image'
+EMBEDDING_MODEL_NAME = 'text-embedding-004' # Vertex AI 上的模型名稱
+IMAGE_GEN_MODEL_NAME = 'imagen-3.0-generate-002' # ★ (修正) 使用您找到的「精確」模型 ★
 VECTOR_DIMENSION = 768
 
-# --- ★ (新) Vertex AI 安全設定 ★ ---
-from vertexai.preview.generative_models import HarmCategory as VertexHarmCategory, HarmBlockThreshold as VertexHarmBlockThreshold
-
-safety_settings = {
-    VertexHarmCategory.HARM_CATEGORY_HATE_SPEECH: VertexHarmBlockThreshold.BLOCK_NONE,
-    VertexHarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: VertexHarmBlockThreshold.BLOCK_NONE,
-    VertexHarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: VertexHarmBlockThreshold.BLOCK_NONE,
-    VertexHarmCategory.HARM_CATEGORY_HARASSMENT: VertexHarmBlockThreshold.BLOCK_NONE,
-}
+# 初始化 Vertex AI 模型
+try:
+    chat_model = GenerativeModel(CHAT_MODEL_NAME)
+    vision_model = GenerativeModel(VISION_MODEL_NAME)
+    embedding_model = TextEmbeddingModel.from_pretrained(EMBEDDING_MODEL_NAME)
+    image_gen_model = ImageGenerationModel.from_pretrained(IMAGE_GEN_MODEL_NAME)
+    print(f"--- (Vertex AI) 所有 AI 專家 (Pro, Flash, Embedding, Imagen) 均已成功初始化！ ---")
+except Exception as e:
+    print(f"!!! 嚴重錯誤：初始化 Vertex AI 模型失敗。錯誤：{e}")
+    chat_model = None # 禁用
 
 # --- 步驟四：AI 宗師的「靈魂」核心 (★ Persona 升級 ★) ---
 system_prompt = """
@@ -190,8 +189,7 @@ system_prompt = """
 
     3.  **【內心思考 - 步驟 3：分支應對 (★ 關鍵 ★)】**
         * **【B1. 如果學生「答對了」】:**
-            * 「太棒了！學生答對了。我的回應『必須』：1. 肯d
-ing他（例如：『完全正確！』、『沒錯！』）。 2. 總結我們剛剛的發現。 3. 提出『下一個』合乎邏輯的蘇格拉底式問題。」
+            * 「太棒了！學生答對了。我的回應『必須』：1. 肯定他（例如：『完全正確！』、『沒錯！』）。 2. 總結我們剛剛的發現。 3. 提出『下一個』合乎邏輯的蘇格拉底式問題。」
         * **【B2. 如果學生「答錯了」】:**
             * 「啊，學生答錯了。他以為是『...』，但正確答案是『...』。」
             * 「我的回應『必須』是：1. 用『溫和、鼓勵』的方式，『委婉地指出』他的答案『可能需要重新思考』。」
@@ -208,23 +206,15 @@ ing他（例如：『完全正確！』、『沒錯！』）。 2. 總結我們�
     * **4. (產生類題):** 你「必須」立刻「產生一個」與剛剛題目「概念相似，但數字或情境不同」的「新類題」。
 """
 
-# ★ (修正) Vertex AI 模型初始化 (★ 語法修正 ★)
-try:
-    chat_model = GenerativeModel(
-        CHAT_MODEL_NAME,
-        system_instruction=[system_prompt], # ★ (修正) System Prompt 在此傳入
-        safety_settings=safety_settings      # ★ (修正) Safety Settings 在此傳入
-    )
-    vision_model = GenerativeModel(
-        VISION_MODEL_NAME,
-        safety_settings=safety_settings      # ★ (修正) 也為視覺模型加入安全設定
-    )
-    embedding_model = TextEmbeddingModel.from_pretrained(EMBEDDING_MODEL_NAME)
-    image_gen_model = ImageGenerationModel.from_pretrained(IMAGE_GEN_MODEL_NAME)
-    print(f"--- (Vertex AI) 所有 AI 專家 (Pro, Flash, Embedding, Imagen) 均已成功初始化！ ---")
-except Exception as e:
-    print(f"!!! 嚴重錯誤：初始化 Vertex AI 模型失敗。錯誤：{e}")
-    chat_model = None # 禁用
+# --- ★ (新) Vertex AI 安全設定 ★ ---
+from vertexai.preview.generative_models import HarmCategory as VertexHarmCategory, HarmBlockThreshold as VertexHarmBlockThreshold
+
+safety_settings = {
+    VertexHarmCategory.HARM_CATEGORY_HATE_SPEECH: VertexHarmBlockThreshold.BLOCK_NONE,
+    VertexHarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: VertexHarmBlockThreshold.BLOCK_NONE,
+    VertexHarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: VertexHarmBlockThreshold.BLOCK_NONE,
+    VertexHarmCategory.HARM_CATEGORY_HARASSMENT: VertexHarmBlockThreshold.BLOCK_NONE,
+}
 
 # --- 步驟七：連接「外部大腦」(Neon 資料庫) (★ 無需變更 ★) ---
 # (此區塊所有函式都無需變更)
@@ -268,7 +258,7 @@ def initialize_database():
         finally:
             conn.close()
 
-# --- ★ (新) Vertex AI 版 `get_chat_history` (★ 語法修正 ★) ---
+# --- ★ (新) Vertex AI 版 `get_chat_history` ★ ---
 def get_chat_history(user_id):
     conn = get_db_connection()
     history_list = [] # ★ Vertex AI 需要 `Content` 物件列表
@@ -288,10 +278,9 @@ def get_chat_history(user_id):
                             # 過濾掉 {draw:...} 標籤，只保留純文字的部分
                             filtered_parts = [p for p in parts_text if not p.strip().startswith('{draw:')]
                             if filtered_parts:
-                                # ★ (修正) Vertex AI 需要的是 Content 物件
-                                role_to_use = "user" if role == "user" else "model"
-                                parts_to_use = [Part.from_text(text) for text in filtered_parts]
-                                history_list.append(Content(role=role_to_use, parts=parts_to_use))
+                                # ★ Vertex AI 的 Part 物件
+                                history_list.append(Part.from_text("\n".join(filtered_parts)))
+                                history_list[-1].role = role # 手動設定角色
         except Exception as e:
             print(f"!!! 錯誤：無法讀取 user_id '{user_id}' 的歷史紀錄。錯誤：{e}")
         finally:
@@ -483,23 +472,28 @@ def handle_message(event):
     # 1. 讀取「過去的記憶」
     past_history = get_chat_history(user_id)
 
-    # 2. 根據「過去的記憶」開啟「對話」
+    # 2. 根據「記憶」開啟「對話宗師」的對話
     try:
-         # ★ (修正) Vertex AI 語法 ★
+         # ★ (新) Vertex AI 語法
          chat_session = chat_model.start_chat(
-             history=past_history
-             # ★ (修正) 移除錯誤的 generation_config
+             history=past_history,
+             generation_config={
+                 "safety_settings": safety_settings
+             }
          )
-         # ★ (修正) 移除多餘的 send_message 和 history 清除
+         # ★ (新) Vertex AI 需要手動加入 System Prompt
+         chat_session.send_message(system_prompt, stream=False)
+         # (清除 system prompt，不存入資料庫)
+         chat_session.history = chat_session.history[2:] 
 
     except Exception as start_chat_e:
          print(f"!!! 警告：從歷史紀錄開啟對話失敗。使用空對話。錯誤：{start_chat_e}")
-         # ★ (修正) Vertex AI 語法 ★
          chat_session = chat_model.start_chat(
-             history=[]
-             # ★ (修正) 移除錯誤的 generation_config
+             history=[], 
+             generation_config={"safety_settings": safety_settings}
          )
-         # ★ (修正) 移除多餘的 send_message 和 history 清除
+         chat_session.send_message(system_prompt, stream=False)
+         chat_session.history = chat_session.history[2:] 
 
     # 3. 準備「當前的輸入」(★ 三位一體專家系統 ★)
     contents_to_send = []
@@ -554,7 +548,7 @@ def handle_message(event):
 
             vision_response = vision_model.generate_content(
                 [img, vision_prompt],
-                # ★ (修正) Vertex AI 中，安全設定已在模型初始化時設定
+                generation_config={"safety_settings": safety_settings}
             )
             vision_analysis = vision_response.text 
             print(f"--- (視覺專家) 分析完畢：{vision_analysis[:70]}... ---")
@@ -592,7 +586,7 @@ def handle_message(event):
             
             speech_response = chat_model.generate_content(
                 [audio_file, audio_prompt],
-                # ★ (修正) Vertex AI 中，安全設定已在模型初始化時設定
+                generation_config={"safety_settings": safety_settings}
             )
             
             vision_analysis = speech_response.text 
