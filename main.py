@@ -549,9 +549,9 @@ def handle_message(event):
             """
 
             vision_response = vision_model.generate_content(
-                [img, vision_prompt]
-                # (generation_config 已移除，因為模型初始化時已設定)
-            )
+                [img, vision_prompt]
+                # (generation_config 已移除，因為模型初始化時已設定)
+            )
             vision_analysis = vision_response.text 
             print(f"--- (視覺專家) 分析完畢：{vision_analysis[:70]}... ---")
 
@@ -587,9 +587,9 @@ def handle_message(event):
             """
             
             speech_response = chat_model.generate_content(
-                [audio_file, audio_prompt]
-  S              # (generation_config 已移除，因為模型初始化時已設定)
-            )
+                [audio_file, audio_prompt]
+                # (generation_config 已移除，因為模型初始化時已設定)
+            )
             
             vision_analysis = speech_response.text 
             print(f"--- (聽覺專家) 分析完畢：{vision_analysis[:70]}... ---")
