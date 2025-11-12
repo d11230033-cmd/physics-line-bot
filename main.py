@@ -500,15 +500,35 @@ def handle_message(event):
             」
             """
             
-            # ★ (還原)
-            speech_response = client.models.generate_content(
-                model=CHAT_MODEL, 
-                contents=[audio_file, audio_prompt]
-            )
-            
-            vision_analysis = speech_response.text 
-            print(f"--- (聽覺專家) 分析完畢：{vision_analysis[:70]}... ---")
+           # ★ (還原) ★ 修正：加入「自動重試」以應對 503 錯誤 ★
+            max_retries_audio = 2
+            attempt_audio = 0
 
+            while attempt_audio < max_retries_audio:
+                try:
+                    # 1. 呼叫 API
+                    speech_response = client.models.generate_content(
+                        model=CHAT_MODEL, 
+                        contents=[audio_file, audio_prompt]
+                    )
+
+                    # 2. (如果成功) 處理回應
+                    vision_analysis = speech_response.text 
+                    print(f"--- (聽覺專家) 語音分析成功 (嘗試第 {attempt_audio + 1} 次) ---")
+                    break # 成功，跳出迴圈
+
+                # 3. (如果失敗，例如 503)
+                except Exception as audio_e:
+                    attempt_audio += 1
+                    print(f"!!! (聽覺專家) 警告：API 呼叫失敗 (第 {attempt_audio} 次)。錯誤：{audio_e}")
+
+                    if attempt_audio < max_retries_audio:
+                        print(f"... 正在重試，等待 2 秒...")
+                        time.sleep(2) 
+                    else:
+                        print(f"!!! (聽覺專家) 嚴重錯誤：重試 {max_retries_audio} 次後仍然失敗。")
+                        raise audio_e # 重試失敗，拋出錯誤 (會被外層的 try...except 接住)
+            # (這行保持在迴圈之外)
             user_question = f"錄音內容分析：『{vision_analysis}』。請基於這個分析，開始用蘇格拉底式教學法引導我。"
 
         else: 
