@@ -1,10 +1,11 @@
 # ==============================================================================
-# JYM 物理 AI 助教 - 最終完整版 (v3.1)
+# JYM 物理 AI 助教 - 終極完結篇 (v3.2)
 # ==============================================================================
 # 更新日誌：
-# 1. [核心] 模型鎖定 gemini-2.5-flash，解決過熱與 429 錯誤。
-# 2. [功能] 攔截「重來/清除」指令，確保記憶重置成功。
-# 3. [新增] 加入 FollowEvent (歡迎訊息)，引導新學生使用選單與重置功能。
+# 1. [核心] 模型鎖定 gemini-2.5-flash (速度最快、無頻率限制、穩定性最高)。
+# 2. [體驗] 新增「自動小尾巴」，在長回應後提示學生如何清除記憶 (彌補選單缺憾)。
+# 3. [安全] 資料庫初始化加入 CREATE EXTENSION vector 檢測，防止向量功能未開啟。
+# 4. [完整] 包含歡迎訊息、數學顯示優化、Loading 動畫、RAG 檢索、研究日誌。
 # ==============================================================================
 
 import os
@@ -15,7 +16,6 @@ import time
 import requests
 
 from flask import Flask, request, abort
-# ★ 注意：這裡加入了 FollowEvent
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, ImageMessage, AudioMessage, TextSendMessage, FollowEvent
@@ -87,6 +87,7 @@ except Exception as e:
 # ==========================================
 # 3. 模型與參數設定
 # ==========================================
+# 使用 Flash 以確保付費 Render 主機的效能最大化，且避免 429 過熱
 CHAT_MODEL = 'gemini-2.5-flash'
 VISION_MODEL = 'gemini-2.5-flash'
 AUDIO_MODEL = 'gemini-2.5-flash'
@@ -109,6 +110,7 @@ system_prompt = """
 1.  **禁止 LaTeX**：LINE 無法顯示 LaTeX 語法 (如 $F=ma$)，**請絕對不要使用**。
 2.  **使用純文字公式**：請用易讀的 Unicode 符號替代。
     * 正確範例：F = ma , v² = v₀² + 2as , θ , Δt , μ , π
+    * 錯誤範例：$v^2$, $\\theta$, $\\Delta t$, \\mu
 3.  **排版**：適當使用換行與條列式，讓手機閱讀更舒適。
 
 ### 教學流程
@@ -158,10 +160,15 @@ def get_db_connection():
         return None
 
 def initialize_database():
-    """初始化 PostgreSQL 資料庫表格"""
+    """初始化 PostgreSQL 資料庫表格 (含安全鎖)"""
     conn = get_db_connection()
     if conn:
         try:
+            # ★ 關鍵修正：確保 vector 擴充功能已啟用
+            with conn.cursor() as cur:
+                cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+                conn.commit()
+
             register_vector(conn)
             with conn.cursor() as cur:
                 cur.execute("CREATE TABLE IF NOT EXISTS chat_history (user_id TEXT PRIMARY KEY, history JSONB);")
@@ -187,7 +194,6 @@ def initialize_database():
             conn.close()
 
 def get_chat_history(user_id):
-    """從資料庫讀取歷史對話"""
     conn = get_db_connection()
     history_list = []
     if conn:
@@ -212,7 +218,6 @@ def get_chat_history(user_id):
     return history_list
 
 def save_chat_history(user_id, chat_session):
-    """儲存對話歷史到資料庫"""
     conn = get_db_connection()
     if conn:
         try:
@@ -239,7 +244,6 @@ def save_chat_history(user_id, chat_session):
             conn.close()
 
 def find_relevant_chunks(query_text, k=3):
-    """RAG: 搜尋相關物理知識"""
     conn = None
     if not client: return "N/A"
     try:
@@ -271,7 +275,6 @@ def find_relevant_chunks(query_text, k=3):
         if conn: conn.close()
 
 def save_to_research_log(user_id, msg_type, content, img_url, analysis, rag_ctx, response):
-    """寫入研究日誌"""
     conn = get_db_connection()
     if conn:
         try:
@@ -321,7 +324,7 @@ def callback():
 # 7. 事件處理 (歡迎訊息 & 訊息回應)
 # ==========================================
 
-# ★ 新增：FollowEvent (歡迎訊息) - 當使用者加入好友時觸發
+# ★ FollowEvent: 針對舊有圖文選單設計的歡迎引導
 @handler.add(FollowEvent)
 def handle_follow(event):
     user_id = event.source.user_id
@@ -336,7 +339,7 @@ def handle_follow(event):
         "🔍 我想知道哪裡算錯\n"
         "🎯 出物理題目檢測我\n\n"
         "⚠️ **重要小撇步**：\n"
-        "若要切換不同單元，或想重新問問題，請直接輸入 **「重來」** 清除記憶，我才能歸零重新思考喔！\n\n"
+        "選單上沒有清除按鈕，所以若要換單元，請直接打字輸入 **「重來」** 來清除記憶喔！\n\n"
         "現在，試著傳一張題目給我，或點選選單試試看吧！💪"
     )
     
@@ -345,7 +348,6 @@ def handle_follow(event):
         TextSendMessage(text=welcome_text)
     )
 
-# 訊息處理主控室
 @handler.add(MessageEvent, message=(TextMessage, ImageMessage, AudioMessage))
 def handle_message(event):
     user_id = event.source.user_id
@@ -370,10 +372,10 @@ def handle_message(event):
                         cur.execute("DELETE FROM chat_history WHERE user_id = %s", (user_id,))
                         conn.commit()
                     
-                    print(f"🧹 使用者 {user_id} 記憶已清除 (Local Action)")
+                    print(f"🧹 使用者 {user_id} 記憶已清除")
                     line_bot_api.reply_message(
                         event.reply_token,
-                        TextSendMessage(text="🧹 沒問題！我已經把剛剛的對話都忘記了。\n我們可以重新開始囉！\n(請傳新題目或問題給我)")
+                        TextSendMessage(text="🧹 沒問題！我已經把剛剛的對話都忘記了。\n我們可以重新開始囉！")
                     )
                 except Exception as e:
                     print(f"Clear memory error: {e}")
@@ -381,7 +383,7 @@ def handle_message(event):
                     conn.close()
             return 
 
-    # 初始化變數
+    # 初始化
     user_message_type = "unknown"
     user_content = ""
     image_url_to_save = ""
@@ -390,22 +392,16 @@ def handle_message(event):
     final_response_text = ""
     search_query_for_rag = "" 
 
-    # 建立對話 Session
     past_history = get_chat_history(user_id)
     try:
-        chat_session = client.chats.create(
-            model=CHAT_MODEL,
-            history=past_history,
-            config=generation_config 
-        )
-    except Exception as e:
-        print(f"⚠️ Session Create Error: {e}, retrying with empty history")
+        chat_session = client.chats.create(model=CHAT_MODEL, history=past_history, config=generation_config)
+    except Exception:
         chat_session = client.chats.create(model=CHAT_MODEL, history=[], config=generation_config)
 
     user_question = "" 
 
     try:
-        # --- A. 圖片處理 ---
+        # --- A. 圖片 ---
         if isinstance(event.message, ImageMessage):
             user_message_type = "image"
             user_content = "Image received" 
@@ -421,14 +417,13 @@ def handle_message(event):
             img = PILImage.open(io.BytesIO(img_bytes))
             vision_prompt = "請客觀描述圖片內容，包含文字、算式、圖表結構。並提取3-5個物理關鍵字。"
             
-            # 使用 Flash 進行視覺分析
             vision_res = client.models.generate_content(model=VISION_MODEL, contents=[img, vision_prompt])
             vision_analysis = vision_res.text
             
             user_question = f"圖片內容分析：『{vision_analysis}』。請依據此分析進行教學。"
             search_query_for_rag = vision_analysis
 
-        # --- B. 語音處理 ---
+        # --- B. 語音 ---
         elif isinstance(event.message, AudioMessage):
             user_message_type = "audio"
             user_content = "Audio received"
@@ -438,21 +433,13 @@ def handle_message(event):
             audio_bytes = msg_content.content
             audio_part = types.Part(inline_data=types.Blob(data=audio_bytes, mime_type='audio/m4a'))
             
-            audio_prompt = """
-            請將這段錄音進行「逐字聽打」並分析學生的「語氣情感」。
-            請回傳：
-            1. 逐字稿：(繁體中文)
-            2. 語氣分析：(例如：困惑、自信、焦急)
-            """
+            audio_prompt = "請將這段錄音進行「逐字聽打(繁體中文)」並分析學生的「語氣情感」。"
             
             max_retries_audio = 3
             attempt_audio = 0
             while attempt_audio < max_retries_audio:
                 try:
-                    speech_res = client.models.generate_content(
-                        model=AUDIO_MODEL,
-                        contents=[audio_part, audio_prompt]
-                    )
+                    speech_res = client.models.generate_content(model=AUDIO_MODEL, contents=[audio_part, audio_prompt])
                     vision_analysis = speech_res.text
                     break
                 except Exception:
@@ -464,25 +451,19 @@ def handle_message(event):
             user_question = f"錄音內容分析：『{vision_analysis}』。請基於這個分析，開始用蘇格拉底式教學法引導我。"
             search_query_for_rag = vision_analysis
 
-        # --- C. 文字處理 ---
+        # --- C. 文字 ---
         else:
             user_message_type = "text"
             user_text = event.message.text
             user_content = user_text
             user_question = user_text 
 
-            # RAG 略過判斷
             SKIP_KEYWORDS = {
                 "hi", "hello", "你好", "早安", "晚安", "謝謝", "thanks", "ok", "好", "收到", "是", "對", "沒錯",
                 "a", "b", "c", "d", "e"
             }
             clean_input = user_text.strip().lower()
-            
-            should_skip = (
-                clean_input in SKIP_KEYWORDS or 
-                is_number(clean_input) or 
-                (len(clean_input) < 2 and clean_input.isalnum())
-            )
+            should_skip = (clean_input in SKIP_KEYWORDS or is_number(clean_input) or (len(clean_input) < 2 and clean_input.isalnum()))
             
             if should_skip:
                 search_query_for_rag = "" 
@@ -501,12 +482,10 @@ def handle_message(event):
         ---「相關教材段落」結束---
         
         學生的目前輸入：「{user_question}」
-        
         請依據 System Prompt 中的指示與上述教材段落進行回應。
         """
         contents_to_send = [rag_prompt]
 
-        # 呼叫 Gemini
         max_retries = 2 
         attempt = 0
         while attempt < max_retries:
@@ -514,14 +493,16 @@ def handle_message(event):
                 response = chat_session.send_message(contents_to_send)
                 final_response_text = response.text 
                 break 
-            except Exception as e:
-                print(f"⚠️ Gemini Error: {e}")
+            except Exception:
                 attempt += 1
                 time.sleep(1)
                 if attempt == max_retries:
                     final_response_text = "抱歉，JYM助教大腦運轉過熱，請稍後再試一次。"
         
-        # 傳送回應給 LINE
+        # ★ 優化：加上操作提示小尾巴 (彌補選單無清除按鈕的缺憾)
+        if len(final_response_text) > 50:
+            final_response_text += "\n\n(💡 想要問新單元？請輸入「重來」清除記憶)"
+
         line_bot_api.reply_message(
             event.reply_token, 
             TextSendMessage(text=final_response_text.replace('\x00', ''))
@@ -536,7 +517,6 @@ def handle_message(event):
         except:
             pass
 
-    # 寫入 Log
     save_to_research_log(
         user_id.replace('\x00', ''), user_message_type, user_content.replace('\x00', ''),
         image_url_to_save, vision_analysis.replace('\x00', ''), 
