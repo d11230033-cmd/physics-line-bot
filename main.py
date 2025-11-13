@@ -1,10 +1,8 @@
 # ==============================================================================
-# JYM 物理 AI 助教 - v4.0 全知全能教授版 (含詳細註解)
+# JYM 物理 AI 助教 - v4.01 快速修復版
 # ==============================================================================
-# 🚀 版本進化重點：
-# 1. [智慧增量學習] 系統有「記憶」，啟動時會比對「已讀書單」。只讀新書，舊書不重複讀，啟動速度飛快。
-# 2. [助教控制台] 您是管理員！在 LINE 輸入 !status, !sync, !clear 可直接操控後台。
-# 3. [來源標註] 回答問題時，AI 會參考並標註資料來源 (例如：[來源: 選修物理Ch1.pdf])。
+# 修正項目：
+# 1. [資料庫] 修正 PostgreSQL 資料型態拼字錯誤 (TIMESTZ -> TIMESTAMPTZ)，解決資料表無法建立的問題。
 # ==============================================================================
 
 import os
@@ -15,8 +13,8 @@ import time
 import requests
 
 # --- 引入多執行緒與檔案搜尋工具 ---
-import threading  # 讓程式可以「一心二用」，一邊服務學生，一邊在後台讀書
-import glob       # 用來搜尋資料夾裡的所有 PDF 檔案
+import threading
+import glob
 
 # --- 網頁框架與 LINE SDK ---
 from flask import Flask, request, abort
@@ -30,11 +28,11 @@ from google.genai import types
 
 # --- 檔案處理工具 ---
 from PIL import Image as PILImage
-from pypdf import PdfReader        # 讀取 PDF 講義用
+from pypdf import PdfReader
 
 # --- 資料庫 (PostgreSQL) ---
 import psycopg2
-from pgvector.psycopg2 import register_vector # 處理向量資料
+from pgvector.psycopg2 import register_vector
 import cloudinary
 import cloudinary.uploader
 
@@ -43,7 +41,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # ==========================================
-# 1. 環境變數設定 (從 Render 後台讀取)
+# 1. 環境變數設定
 # ==========================================
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
@@ -59,7 +57,6 @@ app = Flask(__name__)
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# 連線 Gemini
 try:
     client = genai.Client()
     print("✅ Gemini Client 連線成功")
@@ -67,7 +64,6 @@ except Exception as e:
     print(f"❌ Gemini 連線失敗: {e}")
     client = None
 
-# 連線 Cloudinary (圖床)
 try:
     cloudinary.config(
         cloud_name=CLOUDINARY_CLOUD_NAME,
@@ -78,7 +74,6 @@ try:
 except Exception as e:
     print(f"❌ Cloudinary 連線失敗: {e}")
 
-# 連線 Google Sheets (研究日誌)
 try:
     SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive.file']
     CREDS = Credentials.from_service_account_file('service_account.json', scopes=SCOPES)
@@ -92,7 +87,7 @@ except Exception as e:
     worksheet = None
 
 # ==========================================
-# 3. 模型設定 (System Prompt)
+# 3. 模型設定
 # ==========================================
 CHAT_MODEL = 'gemini-2.5-flash'
 VISION_MODEL = 'gemini-2.5-flash-image'
@@ -124,7 +119,7 @@ generation_config = types.GenerateContentConfig(
 )
 
 # ==========================================
-# 4. 核心函式庫 (資料庫與 RAG)
+# 4. 核心函式庫
 # ==========================================
 
 def get_db_connection():
@@ -135,33 +130,29 @@ def get_db_connection():
         return None
 
 def initialize_database():
-    """系統啟動時初始化資料表，確保腦袋構造正確"""
+    """系統啟動時初始化資料表"""
     conn = get_db_connection()
     if conn:
         try:
             with conn.cursor() as cur:
-                # 啟用向量擴充功能
                 cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
                 conn.commit()
             register_vector(conn)
             with conn.cursor() as cur:
-                # 1. 對話歷史表
                 cur.execute("CREATE TABLE IF NOT EXISTS chat_history (user_id TEXT PRIMARY KEY, history JSONB);")
-                # 2. 物理知識向量表
                 cur.execute(f"CREATE TABLE IF NOT EXISTS physics_vectors (id SERIAL PRIMARY KEY, content TEXT, embedding VECTOR({VECTOR_DIMENSION}));")
                 
-                # ★ v4.0 新增：已讀書單表 (用來記錄哪本書已經讀過了)
-                cur.execute("CREATE TABLE IF NOT EXISTS imported_files (filename TEXT PRIMARY KEY, imported_at TIMESTZ DEFAULT CURRENT_TIMESTAMP);")
+                # ★ 修正：TIMESTZ -> TIMESTAMPTZ
+                cur.execute("CREATE TABLE IF NOT EXISTS imported_files (filename TEXT PRIMARY KEY, imported_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP);")
                 
-                # 3. 研究日誌表
+                # ★ 修正：TIMESTZ -> TIMESTAMPTZ
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS research_log (
-                        id SERIAL PRIMARY KEY, timestamp TIMESTZ DEFAULT CURRENT_TIMESTAMP, 
+                        id SERIAL PRIMARY KEY, timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP, 
                         user_id TEXT, user_message_type TEXT, user_content TEXT, 
                         image_url TEXT, vision_analysis TEXT, rag_context TEXT, ai_response TEXT
                     );""")
                 
-                # 補丁：確保舊版資料庫也有 image_url 欄位
                 cur.execute("""
                     DO $$ BEGIN
                         IF NOT EXISTS (
@@ -171,14 +162,13 @@ def initialize_database():
                     END$$;""")
                 
                 conn.commit()
-                print("✅ 資料庫 v4.0 架構初始化完成")
+                print("✅ 資料庫 v4.01 架構初始化完成")
         except Exception as e:
             print(f"❌ 資料庫初始化錯誤: {e}")
         finally:
             conn.close()
 
 def save_pdf_content(pdf_text, source_name="unknown"):
-    """將 PDF 文字切塊並存入向量資料庫，並登記到已讀書單"""
     if not pdf_text or not client: return False
     
     chunk_size = 1000
@@ -196,7 +186,6 @@ def save_pdf_content(pdf_text, source_name="unknown"):
         for chunk in chunks:
             if len(chunk.strip()) < 50: continue
             
-            # ★ v4.0 來源標註：在內容前加上 [來源: 檔名]，方便 AI 引用
             content_with_source = f"[來源: {source_name}] {chunk}"
             
             res = client.models.embed_content(
@@ -211,9 +200,8 @@ def save_pdf_content(pdf_text, source_name="unknown"):
                     (content_with_source, vector)
                 )
             count += 1
-            time.sleep(0.3) # 稍微休息避免 API 超速
+            time.sleep(0.3)
             
-        # ★ v4.0 關鍵步驟：登記這本書已經讀過了！
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO imported_files (filename) VALUES (%s) ON CONFLICT (filename) DO UPDATE SET imported_at = CURRENT_TIMESTAMP",
@@ -229,16 +217,8 @@ def save_pdf_content(pdf_text, source_name="unknown"):
     finally:
         conn.close()
 
-# --- ★ v4.0 核心：智慧增量學習系統 ---
 def auto_import_corpus_v4():
-    """
-    背景任務：
-    1. 看看資料庫裡已經有哪些書 (imported_files)。
-    2. 看看資料夾裡有哪些書 (corpus/*.pdf)。
-    3. 找出「新書」並讀取。
-    4. 略過舊書，節省時間與資源。
-    """
-    time.sleep(3) # 等待伺服器穩定
+    time.sleep(3)
     print("🔍 [v4.0 智慧同步] 開始檢查 corpus 資料夾...")
     
     conn = get_db_connection()
@@ -247,8 +227,8 @@ def auto_import_corpus_v4():
         return
 
     try:
-        # 1. 取得資料庫「已讀書單」
         processed_files = set()
+        # 因為上面的 initialize_database 會先執行，所以這裡現在應該能找到表了
         with conn.cursor() as cur:
             cur.execute("SELECT filename FROM imported_files")
             rows = cur.fetchall()
@@ -257,7 +237,6 @@ def auto_import_corpus_v4():
         
         print(f"📚 資料庫目前已收錄 {len(processed_files)} 本書。")
 
-        # 2. 掃描硬碟資料夾
         pdf_files = glob.glob("corpus/*.pdf")
         if not pdf_files:
             print("⚠️ corpus 資料夾是空的")
@@ -266,8 +245,6 @@ def auto_import_corpus_v4():
         new_files_count = 0
         for pdf_path in pdf_files:
             file_name = os.path.basename(pdf_path)
-            
-            # ★ 智慧判斷：如果這本書在已讀書單裡，就跳過！
             if file_name in processed_files:
                 continue
             
@@ -299,7 +276,6 @@ def auto_import_corpus_v4():
         conn.close()
 
 def find_relevant_chunks(query_text, k=3):
-    """RAG 檢索：找出最相關的 3 個知識片段"""
     conn = None
     if not client: return "N/A"
     try:
@@ -329,9 +305,8 @@ def find_relevant_chunks(query_text, k=3):
     finally:
         if conn: conn.close()
 
-# --- 歷史紀錄 & Log 工具函式 ---
+# --- 歷史紀錄 & Log ---
 def get_chat_history(user_id):
-    """讀取歷史"""
     conn = get_db_connection()
     history_list = []
     if conn:
@@ -354,7 +329,6 @@ def get_chat_history(user_id):
     return history_list
 
 def save_chat_history(user_id, chat_session):
-    """儲存歷史"""
     conn = get_db_connection()
     if conn:
         try:
@@ -377,7 +351,6 @@ def save_chat_history(user_id, chat_session):
         finally: conn.close()
 
 def save_to_research_log(user_id, msg_type, content, img_url, analysis, rag_ctx, response):
-    """寫入研究日誌"""
     conn = get_db_connection()
     if conn:
         try:
@@ -398,21 +371,16 @@ def save_to_research_log(user_id, msg_type, content, img_url, analysis, rag_ctx,
         except: pass
 
 def send_loading_animation(user_id):
-    """發送 Loading 動畫"""
     url = "https://api.line.me/v2/bot/chat/loading/start"
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"}
     data = {"chatId": user_id, "loadingSeconds": 20}
     try: requests.post(url, headers=headers, json=data, timeout=5)
     except: pass
 
-# --- 程式啟動程序 ---
+# --- 啟動程序 ---
 initialize_database()
-# ★ 啟動 v4.0 智慧同步 (背景執行)
 threading.Thread(target=auto_import_corpus_v4, daemon=True).start()
 
-# ==========================================
-# 5. Webhook & 訊息處理
-# ==========================================
 @app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
@@ -427,7 +395,7 @@ def callback():
 def handle_follow(event):
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text="👨‍🏫 您好，我是 JYM 物理 AI 教授 (v4.0)。\n我已具備「增量學習」能力，會自動消化您上傳的新講義。\n請隨時向我提問！")
+        TextSendMessage(text="👨‍🏫 您好，我是 JYM 物理 AI 教授 (v4.01)。\n我已具備「增量學習」能力，會自動消化您上傳的新講義。\n請隨時向我提問！")
     )
 
 @handler.add(MessageEvent, message=(TextMessage, ImageMessage, AudioMessage, FileMessage))
@@ -435,21 +403,16 @@ def handle_message(event):
     user_id = event.source.user_id
     send_loading_animation(user_id)
 
-    # --- ★ v4.0 助教管理指令區 (Admin Commands) ---
-    # 這些指令只有知道的人可以用，用來管理機器人
+    # --- Admin Commands ---
     if isinstance(event.message, TextMessage):
         user_text = event.message.text.strip()
-        
-        # 1. 查詢狀態 (輸入 !status)
         if user_text == "!status":
             conn = get_db_connection()
             status_msg = "📊 助教工作報告：\n"
             if conn:
                 with conn.cursor() as cur:
-                    # 查片段數
                     cur.execute("SELECT COUNT(*) FROM physics_vectors")
                     vec_count = cur.fetchone()[0]
-                    # 查已讀書單
                     cur.execute("SELECT filename FROM imported_files")
                     files = cur.fetchall()
                 conn.close()
@@ -460,13 +423,11 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=status_msg))
             return
 
-        # 2. 強制同步 (輸入 !sync) - 如果你想強制它再掃描一次
         if user_text == "!sync":
             threading.Thread(target=auto_import_corpus_v4, daemon=True).start()
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="🚀 收到指令！正在背景強制掃描新講義..."))
             return
 
-        # 3. 清空大腦 (輸入 !clear) - 危險操作！
         if user_text == "!clear":
             conn = get_db_connection()
             if conn:
@@ -479,7 +440,6 @@ def handle_message(event):
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text="⚠️ 已執行：大腦完全格式化。所有知識與記憶已清空。"))
             return
 
-        # 4. 清除對話記憶 (輸入 重來) - 這是給一般使用者清對話用的
         if user_text.lower() in ["重來", "清除", "reset"]:
             conn = get_db_connection()
             if conn:
@@ -490,7 +450,6 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="🧹 記憶已清除，我們可以重新開始了。"))
             return 
 
-    # --- 標準對話流程 (若非指令，則執行這裡) ---
     user_message_type = "unknown"
     user_content = ""
     image_url_to_save = ""
@@ -506,7 +465,6 @@ def handle_message(event):
     user_question = ""
 
     try:
-        # 處理圖片
         if isinstance(event.message, ImageMessage):
             user_message_type = "image"
             msg_content = line_bot_api.get_message_content(event.message.id)
@@ -522,7 +480,6 @@ def handle_message(event):
             user_question = f"圖片分析：{vision_analysis}。請教學。"
             search_query_for_rag = vision_analysis
 
-        # 處理語音
         elif isinstance(event.message, AudioMessage):
             user_message_type = "audio"
             msg_content = line_bot_api.get_message_content(event.message.id)
@@ -536,8 +493,7 @@ def handle_message(event):
             user_question = f"語音內容：{vision_analysis}。請教學。"
             search_query_for_rag = vision_analysis
 
-        # 處理文字
-        else: 
+        else:
             user_message_type = "text"
             user_text = event.message.text
             user_content = user_text
@@ -545,13 +501,11 @@ def handle_message(event):
             if len(user_text) > 2:
                 search_query_for_rag = user_text
 
-        # 執行 RAG 知識檢索
         if search_query_for_rag:
             rag_context = find_relevant_chunks(search_query_for_rag)
         else:
             rag_context = "N/A"
 
-        # 組合 Prompt (要求引用來源)
         rag_prompt = f"參考教材：\n{rag_context}\n\n學生問題：{user_question}\n請依System Prompt回應，若有使用教材請標註來源。"
         response = chat_session.send_message([rag_prompt])
         final_response_text = response.text 
@@ -565,7 +519,6 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="⚠️ 系統繁忙中，請稍後再試"))
         except: pass
 
-    # 寫入研究日誌
     save_to_research_log(user_id, user_message_type, user_content, image_url_to_save, vision_analysis, rag_context, final_response_text)
 
 if __name__ == "__main__":
