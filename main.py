@@ -500,35 +500,39 @@ def handle_message(event):
             」
             """
             
-           # ★ (還原) ★ 修正：加入「自動重試」以應對 503 錯誤 ★
-            max_retries_audio = 2
+          # ★ (最終黃金版) ★ 使用最新的 2.5-Flash 聽錄音 (支援音訊且快速) ★
+            max_retries_audio = 3
             attempt_audio = 0
-
+            
+            # 定義這個「完美平衡」的模型 (支援音訊、速度快、最新版)
+            AUDIO_MODEL_NAME = "gemini-2.5-flash" 
+            
             while attempt_audio < max_retries_audio:
                 try:
-                    # 1. 呼叫 API
+                    # 1. 呼叫 API (使用 2.5-Flash 模型來處理音訊)
                     speech_response = client.models.generate_content(
-                        model=CHAT_MODEL, 
+                        model=AUDIO_MODEL_NAME,  # <--- 這裡改用 2.5-Flash！
                         contents=[audio_file, audio_prompt]
                     )
-
+                    
                     # 2. (如果成功) 處理回應
                     vision_analysis = speech_response.text 
-                    print(f"--- (聽覺專家) 語音分析成功 (嘗試第 {attempt_audio + 1} 次) ---")
+                    print(f"--- (聽覺專家) 語音分析成功 (使用 {AUDIO_MODEL_NAME}) ---")
                     break # 成功，跳出迴圈
-
-                # 3. (如果失敗，例如 503)
+    
+                # 3. (如果失敗)
                 except Exception as audio_e:
                     attempt_audio += 1
                     print(f"!!! (聽覺專家) 警告：API 呼叫失敗 (第 {attempt_audio} 次)。錯誤：{audio_e}")
-
+                    
                     if attempt_audio < max_retries_audio:
-                        print(f"... 正在重試，等待 2 秒...")
+                        print(f"    ... 正在重試，等待 2 秒...")
                         time.sleep(2) 
                     else:
                         print(f"!!! (聽覺專家) 嚴重錯誤：重試 {max_retries_audio} 次後仍然失敗。")
-                        raise audio_e # 重試失敗，拋出錯誤 (會被外層的 try...except 接住)
-            # (這行保持在迴圈之外)
+                        raise audio_e # 重試失敗，拋出錯誤
+            
+            # (這行保持在迴圈之外) 這裡依然交給最聰明的 Pro 進行教學
             user_question = f"錄音內容分析：『{vision_analysis}』。請基於這個分析，開始用蘇格拉底式教學法引導我。"
 
         else: 
