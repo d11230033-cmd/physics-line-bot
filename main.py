@@ -10,11 +10,20 @@ from datetime import datetime
 from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
+
+# [修正重點] 發送訊息用的模組 (ReplyMessageRequest, TextMessage)
 from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, ReplyMessageRequest,
-    TextMessage, TextMessageContent, ImageMessageContent, AudioMessageContent
+    TextMessage
 )
-from linebot.v3.webhooks import MessageEvent
+
+# [修正重點] 接收訊息用的模組 (Event, Content) 必須從 webhooks 引入
+from linebot.v3.webhooks import (
+    MessageEvent,
+    TextMessageContent,
+    ImageMessageContent,
+    AudioMessageContent
+)
 
 # --- 2. AI 大腦 (Google Gemini) ---
 import google.generativeai as genai
@@ -57,14 +66,13 @@ def init_google_sheet():
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
         # 1. 優先尋找 Render Secret Files 路徑
-        # 在 Render 上，Secret Files 通常掛載在 /etc/secrets/
         key_path = "/etc/secrets/service_account.json"
         
         # 2. 如果找不到 (例如在本地測試)，試試看根目錄
         if not os.path.exists(key_path):
             key_path = "service_account.json"
             
-        # 3. 最後嘗試舊檔名 (相容性)
+        # 3. 最後嘗試舊檔名
         if not os.path.exists(key_path):
             key_path = "credentials.json"
 
@@ -177,9 +185,16 @@ def background_learning_task():
             try:
                 conn = get_db_connection()
                 cur = conn.cursor()
-                cur.execute("SELECT filename FROM imported_files")
-                imported = {row[0] for row in cur.fetchall()}
-                
+                # 檢查資料庫是否存在 (防止啟動初期連線失敗)
+                try:
+                    cur.execute("SELECT filename FROM imported_files")
+                    imported = {row[0] for row in cur.fetchall()}
+                except:
+                    # 如果資料表還沒建好，先跳過這次循環
+                    conn.rollback()
+                    time.sleep(10)
+                    continue
+
                 for f_name in os.listdir(materials_dir):
                     if f_name.endswith(".pdf") and f_name not in imported:
                         print(f"📚 正在研讀新教材：{f_name}...")
@@ -381,6 +396,7 @@ def handle_message(event):
     # 雙重 Log
     log_interaction(user_id, user_name, m_type, user_log_content, final_response)
 
+# 確保資料庫在 app 啟動時初始化
 initialize_database()
 
 if __name__ == "__main__":
