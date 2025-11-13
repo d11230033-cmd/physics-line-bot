@@ -1,10 +1,10 @@
 # ==============================================================================
-# JYM 物理 AI 助教 - 最終穩定版 (v3.0)
+# JYM 物理 AI 助教 - 最終完整版 (v3.1)
 # ==============================================================================
 # 更新日誌：
-# 1. [修正] 模型改為 gemini-2.5-flash，徹底解決 429 Too Many Requests (過熱) 問題。
-# 2. [新增] 本地端攔截「重來/清除」指令，確保重置絕對成功，不消耗 AI 額度。
-# 3. [優化] System Prompt 強制禁止 LaTeX，確保 LINE 數學公式顯示完美。
+# 1. [核心] 模型鎖定 gemini-2.5-flash，解決過熱與 429 錯誤。
+# 2. [功能] 攔截「重來/清除」指令，確保記憶重置成功。
+# 3. [新增] 加入 FollowEvent (歡迎訊息)，引導新學生使用選單與重置功能。
 # ==============================================================================
 
 import os
@@ -12,12 +12,13 @@ import io
 import json
 import datetime
 import time
-import requests  # 用於呼叫 LINE Loading API
+import requests
 
 from flask import Flask, request, abort
+# ★ 注意：這裡加入了 FollowEvent
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, ImageMessage, AudioMessage, TextSendMessage
+from linebot.models import MessageEvent, TextMessage, ImageMessage, AudioMessage, TextSendMessage, FollowEvent
 
 # Google GenAI SDK (Gemini)
 from google import genai
@@ -53,7 +54,7 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # --- 初始化 Gemini ---
 try:
-    client = genai.Client() # 自動讀取 GEMINI_API_KEY
+    client = genai.Client()
     print("✅ Gemini Client 連線成功")
 except Exception as e:
     print(f"❌ Gemini 連線失敗: {e}")
@@ -86,18 +87,15 @@ except Exception as e:
 # ==========================================
 # 3. 模型與參數設定
 # ==========================================
-# ★ 關鍵修改：使用 Flash 模型以確保回應速度與避免頻率限制錯誤
 CHAT_MODEL = 'gemini-2.5-flash'
-VISION_MODEL = 'gemini-2.5-flash-image' # Flash 模型現在已原生支援視覺
+VISION_MODEL = 'gemini-2.5-flash'
 AUDIO_MODEL = 'gemini-2.5-flash'
 EMBEDDING_MODEL = 'models/text-embedding-004'
 VECTOR_DIMENSION = 768
-
-# 記憶長度限制 (只留最後 20 則訊息)
 MAX_HISTORY_LENGTH = 20 
 
 # ==========================================
-# 4. System Prompt (教學靈魂 - 數學顯示優化版)
+# 4. System Prompt (教學靈魂)
 # ==========================================
 system_prompt = """
 你是由頂尖大學物理系博士開發的「JYM物理AI助教」，你是台灣高中物理教育的權威。
@@ -107,11 +105,10 @@ system_prompt = """
 2.  **語言**：使用自然的繁體中文 (台灣用語)。
 3.  **身份**：你是有耐心、鼓勵學生的家教，不是冷冰冰的搜尋引擎。
 
-### ★ 格式規範 (LINE 介面專用 - 非常重要)
-1.  **禁止 LaTeX**：LINE 無法顯示 LaTeX 語法 (如 $F=ma$, \\frac{...})，**請絕對不要使用**。
+### ★ 格式規範 (LINE 介面專用)
+1.  **禁止 LaTeX**：LINE 無法顯示 LaTeX 語法 (如 $F=ma$)，**請絕對不要使用**。
 2.  **使用純文字公式**：請用易讀的 Unicode 符號替代。
-    * 正確範例：F = ma , v² = v₀² + 2as , θ (角度) , λ (波長) , Δt , μ (摩擦係數) , π
-    * 錯誤範例：$v^2$, $\\theta$, $\\Delta t$, \\mu
+    * 正確範例：F = ma , v² = v₀² + 2as , θ , Δt , μ , π
 3.  **排版**：適當使用換行與條列式，讓手機閱讀更舒適。
 
 ### 教學流程
@@ -120,17 +117,9 @@ system_prompt = """
     * 若學生要求「解題」，請他上傳題目圖片。
     * 若學生要求「找錯」，請他上傳計算過程。
     * 若學生要求「出題」，請先詢問年級、單元與難度。
-2.  **思考邏輯**：
-    * 先在內心計算正確答案。
-    * 評估學生的理解斷層在哪裡。
-3.  **回應策略**：
-    * 若學生答對：給予讚美，並出一個類似題(數據不同)確認他真的懂了。
+2.  **回應策略**：
+    * 若學生答對：給予讚美，並出一個類似題確認他真的懂了。
     * 若學生答錯：溫柔指出盲點，給予一個小的提示，讓他再試一次。
-
-### RAG 知識庫運用
-* 系統會提供「相關教材段落」。
-* 請優先參考教材中的定義與公式。
-* 若教材不足，請自信地運用你身為物理博士的內建知識。
 """
 
 generation_config = types.GenerateContentConfig(
@@ -149,7 +138,7 @@ generation_config = types.GenerateContentConfig(
 # ==========================================
 
 def send_loading_animation(user_id):
-    """發送 LINE Loading 動畫，降低使用者等待焦慮"""
+    """發送 LINE Loading 動畫"""
     url = "https://api.line.me/v2/bot/chat/loading/start"
     headers = {
         "Content-Type": "application/json",
@@ -282,7 +271,7 @@ def find_relevant_chunks(query_text, k=3):
         if conn: conn.close()
 
 def save_to_research_log(user_id, msg_type, content, img_url, analysis, rag_ctx, response):
-    """寫入研究日誌 (DB + Sheets)"""
+    """寫入研究日誌"""
     conn = get_db_connection()
     if conn:
         try:
@@ -329,8 +318,34 @@ def callback():
     return 'OK'
 
 # ==========================================
-# 7. 訊息處理主控室 (Main Handler)
+# 7. 事件處理 (歡迎訊息 & 訊息回應)
 # ==========================================
+
+# ★ 新增：FollowEvent (歡迎訊息) - 當使用者加入好友時觸發
+@handler.add(FollowEvent)
+def handle_follow(event):
+    user_id = event.source.user_id
+    print(f"🎉 新使用者加入: {user_id}")
+    
+    welcome_text = (
+        "🎉 歡迎來到 JYM 物理教室！\n"
+        "我是你的 AI 專屬助教。\n\n"
+        "👇 **你可以點選下方的選單來學習** 👇\n"
+        "📖 教我物理觀念\n"
+        "📝 教我解物理試題\n"
+        "🔍 我想知道哪裡算錯\n"
+        "🎯 出物理題目檢測我\n\n"
+        "⚠️ **重要小撇步**：\n"
+        "若要切換不同單元，或想重新問問題，請直接輸入 **「重來」** 清除記憶，我才能歸零重新思考喔！\n\n"
+        "現在，試著傳一張題目給我，或點選選單試試看吧！💪"
+    )
+    
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=welcome_text)
+    )
+
+# 訊息處理主控室
 @handler.add(MessageEvent, message=(TextMessage, ImageMessage, AudioMessage))
 def handle_message(event):
     user_id = event.source.user_id
@@ -342,11 +357,10 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="系統維護中 (API Error)"))
         return
 
-    # ★ (關鍵修復) 優先處理「清除記憶」指令
-    # 這一段在建立 Gemini Session 之前執行，確保不消耗額度且絕對成功
+    # 2. 優先處理「清除記憶」指令
     if isinstance(event.message, TextMessage):
         user_text_raw = event.message.text.strip().lower()
-        RESET_KEYWORDS = ["重來", "清除", "reset", "clear", "清除記憶", "忘記"]
+        RESET_KEYWORDS = ["重來", "清除", "reset", "clear", "清除記憶", "忘記", "清空"]
         
         if user_text_raw in RESET_KEYWORDS:
             conn = get_db_connection()
@@ -359,13 +373,13 @@ def handle_message(event):
                     print(f"🧹 使用者 {user_id} 記憶已清除 (Local Action)")
                     line_bot_api.reply_message(
                         event.reply_token,
-                        TextSendMessage(text="🧹 沒問題！我已經把剛剛的對話都忘記了。\n我們可以重新開始囉！")
+                        TextSendMessage(text="🧹 沒問題！我已經把剛剛的對話都忘記了。\n我們可以重新開始囉！\n(請傳新題目或問題給我)")
                     )
                 except Exception as e:
                     print(f"Clear memory error: {e}")
                 finally:
                     conn.close()
-            return # 直接結束，不繼續執行後續的 AI 呼叫
+            return 
 
     # 初始化變數
     user_message_type = "unknown"
@@ -440,7 +454,6 @@ def handle_message(event):
                         contents=[audio_part, audio_prompt]
                     )
                     vision_analysis = speech_res.text
-                    print(f"--- (聽覺) 語音分析成功 ---")
                     break
                 except Exception:
                     attempt_audio += 1
@@ -458,7 +471,7 @@ def handle_message(event):
             user_content = user_text
             user_question = user_text 
 
-            # RAG 略過判斷 (節省資源)
+            # RAG 略過判斷
             SKIP_KEYWORDS = {
                 "hi", "hello", "你好", "早安", "晚安", "謝謝", "thanks", "ok", "好", "收到", "是", "對", "沒錯",
                 "a", "b", "c", "d", "e"
@@ -493,7 +506,7 @@ def handle_message(event):
         """
         contents_to_send = [rag_prompt]
 
-        # 呼叫 Gemini (加入重試機制)
+        # 呼叫 Gemini
         max_retries = 2 
         attempt = 0
         while attempt < max_retries:
