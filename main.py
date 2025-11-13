@@ -1,14 +1,10 @@
 # ==============================================================================
-# JYM 物理 AI 助教 - 核心主程式 (第 22 紀元：完全體)
+# JYM 物理 AI 助教 - 最終穩定版 (v3.0)
 # ==============================================================================
-# 功能特色：
-# 1. 多模態教學：支援文字、圖片(題目)、語音(提問)。
-# 2. 蘇格拉底教學法：透過 System Prompt 引導，不給直接答案。
-# 3. RAG 檢索增強：連接 Neon PostgreSQL 向量資料庫，搜尋物理教材。
-# 4. ★ (新) 效能優化：智慧過濾閒聊與數字，略過 RAG 查詢以加速。
-# 5. ★ (新) 體驗優化：LINE Loading 動畫，減少使用者等待焦慮。
-# 6. ★ (新) 成本控管：對話記憶採「滑動視窗」，只保留最近 20 則訊息。
-# 7. 研究紀錄：同步將對話備份至 Google Sheets 供開發者研究。
+# 更新日誌：
+# 1. [修正] 模型改為 gemini-2.5-flash，徹底解決 429 Too Many Requests (過熱) 問題。
+# 2. [新增] 本地端攔截「重來/清除」指令，確保重置絕對成功，不消耗 AI 額度。
+# 3. [優化] System Prompt 強制禁止 LaTeX，確保 LINE 數學公式顯示完美。
 # ==============================================================================
 
 import os
@@ -39,7 +35,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # ==========================================
-# 1. 環境變數設定 (請確保 Render 上已設定這些變數)
+# 1. 環境變數設定
 # ==========================================
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
@@ -47,7 +43,6 @@ DATABASE_URL = os.environ.get('DATABASE_URL')
 CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME')
 CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY')
 CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET')
-# GEMINI_API_KEY 若未自動抓取，可視情況在此讀取，但 genai.Client() 通常會自動抓 os.environ
 
 # ==========================================
 # 2. 服務初始化
@@ -58,7 +53,7 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # --- 初始化 Gemini ---
 try:
-    client = genai.Client() # 自動讀取 GEMINI_API_KEY 環境變數
+    client = genai.Client() # 自動讀取 GEMINI_API_KEY
     print("✅ Gemini Client 連線成功")
 except Exception as e:
     print(f"❌ Gemini 連線失敗: {e}")
@@ -80,7 +75,7 @@ try:
     SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive.file']
     CREDS = Credentials.from_service_account_file('service_account.json', scopes=SCOPES)
     gc = gspread.authorize(CREDS)
-    SPREADSHEET_KEY = "1Evd8WACx_uDUl04c5x2jADFxgLl1A3jW2z0_RynTmhU"  # 請確認這是正確的 ID
+    SPREADSHEET_KEY = "1Evd8WACx_uDUl04c5x2jADFxgLl1A3jW2z0_RynTmhU" 
     sh = gc.open_by_key(SPREADSHEET_KEY)
     worksheet = sh.get_worksheet(0)
     print("✅ Google Sheets 連線成功")
@@ -91,17 +86,18 @@ except Exception as e:
 # ==========================================
 # 3. 模型與參數設定
 # ==========================================
-CHAT_MODEL = 'gemini-2.5-pro'
-VISION_MODEL = 'gemini-2.5-flash-image'
+# ★ 關鍵修改：使用 Flash 模型以確保回應速度與避免頻率限制錯誤
+CHAT_MODEL = 'gemini-2.5-flash'
+VISION_MODEL = 'gemini-2.5-flash-image' # Flash 模型現在已原生支援視覺
 AUDIO_MODEL = 'gemini-2.5-flash'
 EMBEDDING_MODEL = 'models/text-embedding-004'
 VECTOR_DIMENSION = 768
 
-# ★ 記憶長度限制 (只留最後 N 則訊息)
+# 記憶長度限制 (只留最後 20 則訊息)
 MAX_HISTORY_LENGTH = 20 
 
 # ==========================================
-# 4. System Prompt (教學靈魂)
+# 4. System Prompt (教學靈魂 - 數學顯示優化版)
 # ==========================================
 system_prompt = """
 你是由頂尖大學物理系博士開發的「JYM物理AI助教」，你是台灣高中物理教育的權威。
@@ -111,11 +107,11 @@ system_prompt = """
 2.  **語言**：使用自然的繁體中文 (台灣用語)。
 3.  **身份**：你是有耐心、鼓勵學生的家教，不是冷冰冰的搜尋引擎。
 
-### ★ 格式規範 (LINE 介面專用)
+### ★ 格式規範 (LINE 介面專用 - 非常重要)
 1.  **禁止 LaTeX**：LINE 無法顯示 LaTeX 語法 (如 $F=ma$, \\frac{...})，**請絕對不要使用**。
 2.  **使用純文字公式**：請用易讀的 Unicode 符號替代。
-    * 正確範例：F = ma , v² = v₀² + 2as , θ (角度) , λ (波長) , Δt
-    * 錯誤範例：$v^2$, $\\theta$, $\\Delta t$
+    * 正確範例：F = ma , v² = v₀² + 2as , θ (角度) , λ (波長) , Δt , μ (摩擦係數) , π
+    * 錯誤範例：$v^2$, $\\theta$, $\\Delta t$, \\mu
 3.  **排版**：適當使用換行與條列式，讓手機閱讀更舒適。
 
 ### 教學流程
@@ -139,7 +135,7 @@ system_prompt = """
 
 generation_config = types.GenerateContentConfig(
     system_instruction=system_prompt,
-    temperature=0.7, # 保持一點創造力
+    temperature=0.7, 
     safety_settings=[
         types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold=types.HarmBlockThreshold.BLOCK_NONE),
         types.SafetySetting(category=types.HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=types.HarmBlockThreshold.BLOCK_NONE),
@@ -152,8 +148,8 @@ generation_config = types.GenerateContentConfig(
 # 5. 輔助函式庫
 # ==========================================
 
-# ★ (新功能) 發送 LINE Loading 動畫
 def send_loading_animation(user_id):
+    """發送 LINE Loading 動畫，降低使用者等待焦慮"""
     url = "https://api.line.me/v2/bot/chat/loading/start"
     headers = {
         "Content-Type": "application/json",
@@ -173,22 +169,27 @@ def get_db_connection():
         return None
 
 def initialize_database():
+    """初始化 PostgreSQL 資料庫表格"""
     conn = get_db_connection()
     if conn:
         try:
             register_vector(conn)
             with conn.cursor() as cur:
-                # 建立對話紀錄表
                 cur.execute("CREATE TABLE IF NOT EXISTS chat_history (user_id TEXT PRIMARY KEY, history JSONB);")
-                # 建立向量知識庫表
                 cur.execute(f"CREATE TABLE IF NOT EXISTS physics_vectors (id SERIAL PRIMARY KEY, content TEXT, embedding VECTOR({VECTOR_DIMENSION}));")
-                # 建立研究日誌表
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS research_log (
                         id SERIAL PRIMARY KEY, timestamp TIMESTZ DEFAULT CURRENT_TIMESTAMP, 
                         user_id TEXT, user_message_type TEXT, user_content TEXT, 
                         image_url TEXT, vision_analysis TEXT, rag_context TEXT, ai_response TEXT
                     );""")
+                cur.execute("""
+                    DO $$ BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name='research_log' AND column_name='image_url'
+                        ) THEN ALTER TABLE research_log ADD COLUMN image_url TEXT; END IF;
+                    END$$;""")
                 conn.commit()
                 print("✅ 資料庫表格初始化完成")
         except Exception as e:
@@ -196,8 +197,8 @@ def initialize_database():
         finally:
             conn.close()
 
-# 讀取歷史紀錄
 def get_chat_history(user_id):
+    """從資料庫讀取歷史對話"""
     conn = get_db_connection()
     history_list = []
     if conn:
@@ -210,19 +211,19 @@ def get_chat_history(user_id):
                     for item in history_json:
                         role = item.get('role', 'user')
                         parts_text = item.get('parts', [])
-                        # 轉換回 Gemini SDK 格式
-                        history_list.append(types.Content(
-                            role=role, 
-                            parts=[types.Part.from_text(text=t) for t in parts_text]
-                        ))
+                        if role == 'user' or role == 'model':
+                            history_list.append(types.Content(
+                                role=role, 
+                                parts=[types.Part.from_text(text=t) for t in parts_text]
+                            ))
         except Exception as e:
             print(f"⚠️ 讀取歷史失敗: {e}")
         finally:
             conn.close()
     return history_list
 
-# ★ (優化版) 儲存歷史紀錄：包含滑動視窗切割
 def save_chat_history(user_id, chat_session):
+    """儲存對話歷史到資料庫"""
     conn = get_db_connection()
     if conn:
         try:
@@ -234,7 +235,6 @@ def save_chat_history(user_id, chat_session):
                         parts_text = [p.text for p in message.parts if hasattr(p, 'text')]
                         history_to_save.append({'role': message.role, 'parts': parts_text})
             
-            # ★ 切割過舊的記憶，只留最後 MAX_HISTORY_LENGTH 則
             if len(history_to_save) > MAX_HISTORY_LENGTH:
                 history_to_save = history_to_save[-MAX_HISTORY_LENGTH:]
 
@@ -249,12 +249,11 @@ def save_chat_history(user_id, chat_session):
         finally:
             conn.close()
 
-# RAG 核心：搜尋向量資料庫
 def find_relevant_chunks(query_text, k=3):
+    """RAG: 搜尋相關物理知識"""
     conn = None
     if not client: return "N/A"
     try:
-        # 產生查詢向量
         result = client.models.embed_content(
             model=EMBEDDING_MODEL,
             contents=[query_text.replace('\x00', '')]
@@ -265,7 +264,6 @@ def find_relevant_chunks(query_text, k=3):
         if not conn: return "N/A"
         register_vector(conn)
         
-        # 向量相似度搜尋 (<-> 運算子)
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT content FROM physics_vectors ORDER BY embedding <-> %s::vector LIMIT %s",
@@ -273,19 +271,18 @@ def find_relevant_chunks(query_text, k=3):
             )
             results = cur.fetchall()
         
-        if not results: return "N/A (No match found)"
+        if not results: return "N/A"
         
         context = "\n\n---\n\n".join([row[0] for row in results])
         return context
     except Exception as e:
         print(f"⚠️ RAG 搜尋錯誤: {e}")
-        return "N/A (Error)"
+        return "N/A"
     finally:
         if conn: conn.close()
 
-# 記錄研究日誌 (PostgreSQL + Google Sheets)
 def save_to_research_log(user_id, msg_type, content, img_url, analysis, rag_ctx, response):
-    # 1. 寫入資料庫
+    """寫入研究日誌 (DB + Sheets)"""
     conn = get_db_connection()
     if conn:
         try:
@@ -301,7 +298,6 @@ def save_to_research_log(user_id, msg_type, content, img_url, analysis, rag_ctx,
         finally:
             conn.close()
 
-    # 2. 寫入 Google Sheets
     if worksheet:
         try:
             now_utc = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
@@ -310,7 +306,6 @@ def save_to_research_log(user_id, msg_type, content, img_url, analysis, rag_ctx,
         except Exception as e:
             print(f"⚠️ Log Sheet Error: {e}")
 
-# ★ (新 helper) 判斷字串是否為數字
 def is_number(s):
     try:
         float(s)
@@ -318,7 +313,6 @@ def is_number(s):
     except ValueError:
         return False
 
-# 初始化 DB
 initialize_database()
 
 # ==========================================
@@ -341,12 +335,37 @@ def callback():
 def handle_message(event):
     user_id = event.source.user_id
     
-    # ★ 1. 收到訊息立刻送出 Loading 動畫
+    # 1. 收到訊息立刻送出 Loading 動畫
     send_loading_animation(user_id)
 
     if not client:
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="系統維護中 (API Error)"))
         return
+
+    # ★ (關鍵修復) 優先處理「清除記憶」指令
+    # 這一段在建立 Gemini Session 之前執行，確保不消耗額度且絕對成功
+    if isinstance(event.message, TextMessage):
+        user_text_raw = event.message.text.strip().lower()
+        RESET_KEYWORDS = ["重來", "清除", "reset", "clear", "清除記憶", "忘記"]
+        
+        if user_text_raw in RESET_KEYWORDS:
+            conn = get_db_connection()
+            if conn:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("DELETE FROM chat_history WHERE user_id = %s", (user_id,))
+                        conn.commit()
+                    
+                    print(f"🧹 使用者 {user_id} 記憶已清除 (Local Action)")
+                    line_bot_api.reply_message(
+                        event.reply_token,
+                        TextSendMessage(text="🧹 沒問題！我已經把剛剛的對話都忘記了。\n我們可以重新開始囉！")
+                    )
+                except Exception as e:
+                    print(f"Clear memory error: {e}")
+                finally:
+                    conn.close()
+            return # 直接結束，不繼續執行後續的 AI 呼叫
 
     # 初始化變數
     user_message_type = "unknown"
@@ -355,27 +374,28 @@ def handle_message(event):
     vision_analysis = ""
     rag_context = "N/A"
     final_response_text = ""
-    search_query_for_rag = "" # 專門用來查資料庫的字串
+    search_query_for_rag = "" 
 
-    # 讀取並建立對話 session
+    # 建立對話 Session
     past_history = get_chat_history(user_id)
     try:
         chat_session = client.chats.create(
             model=CHAT_MODEL,
             history=past_history,
-            config=generation_config
+            config=generation_config 
         )
-    except Exception:
-        # 若 history 格式有問題，則開新局
+    except Exception as e:
+        print(f"⚠️ Session Create Error: {e}, retrying with empty history")
         chat_session = client.chats.create(model=CHAT_MODEL, history=[], config=generation_config)
 
+    user_question = "" 
+
     try:
-        # --- 處理圖片訊息 ---
+        # --- A. 圖片處理 ---
         if isinstance(event.message, ImageMessage):
             user_message_type = "image"
-            user_content = "Image received"
+            user_content = "Image received" 
             
-            # 取得圖片並上傳
             msg_content = line_bot_api.get_message_content(event.message.id)
             img_bytes = msg_content.content
             try:
@@ -384,18 +404,17 @@ def handle_message(event):
             except:
                 image_url_to_save = "upload_failed"
 
-            # Vision 分析
             img = PILImage.open(io.BytesIO(img_bytes))
             vision_prompt = "請客觀描述圖片內容，包含文字、算式、圖表結構。並提取3-5個物理關鍵字。"
             
+            # 使用 Flash 進行視覺分析
             vision_res = client.models.generate_content(model=VISION_MODEL, contents=[img, vision_prompt])
             vision_analysis = vision_res.text
             
-            # 設定 Prompt 與 搜尋關鍵字
-            user_content_for_ai = f"圖片內容分析：『{vision_analysis}』。請依據此分析進行教學。"
-            search_query_for_rag = vision_analysis # ★ 用分析結果去查資料庫
+            user_question = f"圖片內容分析：『{vision_analysis}』。請依據此分析進行教學。"
+            search_query_for_rag = vision_analysis
 
-        # --- 處理語音訊息 ---
+        # --- B. 語音處理 ---
         elif isinstance(event.message, AudioMessage):
             user_message_type = "audio"
             user_content = "Audio received"
@@ -405,33 +424,44 @@ def handle_message(event):
             audio_bytes = msg_content.content
             audio_part = types.Part(inline_data=types.Blob(data=audio_bytes, mime_type='audio/m4a'))
             
-            # Audio 分析 (語音轉文字)
-            # 簡單重試機制
-            for _ in range(3):
+            audio_prompt = """
+            請將這段錄音進行「逐字聽打」並分析學生的「語氣情感」。
+            請回傳：
+            1. 逐字稿：(繁體中文)
+            2. 語氣分析：(例如：困惑、自信、焦急)
+            """
+            
+            max_retries_audio = 3
+            attempt_audio = 0
+            while attempt_audio < max_retries_audio:
                 try:
                     speech_res = client.models.generate_content(
                         model=AUDIO_MODEL,
-                        contents=[audio_part, "請將這段錄音進行逐字聽打(繁體中文)。"]
+                        contents=[audio_part, audio_prompt]
                     )
                     vision_analysis = speech_res.text
+                    print(f"--- (聽覺) 語音分析成功 ---")
                     break
-                except:
-                    time.sleep(1)
+                except Exception:
+                    attempt_audio += 1
+                    time.sleep(2)
+                    if attempt_audio == max_retries_audio:
+                        vision_analysis = "語音辨識失敗"
             
-            user_content_for_ai = f"語音內容：『{vision_analysis}』。請依據此內容回答。"
-            search_query_for_rag = vision_analysis # ★ 用聽打稿去查資料庫
+            user_question = f"錄音內容分析：『{vision_analysis}』。請基於這個分析，開始用蘇格拉底式教學法引導我。"
+            search_query_for_rag = vision_analysis
 
-        # --- 處理文字訊息 ---
+        # --- C. 文字處理 ---
         else:
             user_message_type = "text"
             user_text = event.message.text
             user_content = user_text
-            user_content_for_ai = user_text # 文字直接傳給 AI
+            user_question = user_text 
 
-            # ★ 智慧 RAG 略過判斷
+            # RAG 略過判斷 (節省資源)
             SKIP_KEYWORDS = {
                 "hi", "hello", "你好", "早安", "晚安", "謝謝", "thanks", "ok", "好", "收到", "是", "對", "沒錯",
-                "a", "b", "c", "d", "e" # 選項
+                "a", "b", "c", "d", "e"
             }
             clean_input = user_text.strip().lower()
             
@@ -442,47 +472,56 @@ def handle_message(event):
             )
             
             if should_skip:
-                print(f"🚀 (加速) 略過 RAG 搜尋: {clean_input}")
-                search_query_for_rag = "" # 空字串代表不搜
+                search_query_for_rag = "" 
             else:
-                search_query_for_rag = user_text # 正常搜尋
+                search_query_for_rag = user_text
 
-        # --- 執行 RAG 搜尋 (如果有查詢關鍵字) ---
+        # --- 4. RAG 與 回應 ---
         if search_query_for_rag:
             rag_context = find_relevant_chunks(search_query_for_rag)
         else:
             rag_context = "N/A (Skipped)"
 
-        # --- 呼叫 Gemini 生成回答 ---
-        final_prompt = f"""
-        【參考教材資料】
+        rag_prompt = f"""
+        ---「相關教材段落」開始---
         {rag_context}
-        ----------------
-        【學生輸入情境】
-        {user_content_for_ai}
+        ---「相關教材段落」結束---
+        
+        學生的目前輸入：「{user_question}」
+        
+        請依據 System Prompt 中的指示與上述教材段落進行回應。
         """
-        
-        # 重試機制避免 503 錯誤
-        for _ in range(2):
-            try:
-                response = chat_session.send_message(final_prompt)
-                final_response_text = response.text
-                break
-            except:
-                time.sleep(1)
-        
-        if not final_response_text:
-            final_response_text = "抱歉，思考運轉過熱，請稍後再試一次。"
+        contents_to_send = [rag_prompt]
 
-        # 回覆 LINE
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=final_response_text))
+        # 呼叫 Gemini (加入重試機制)
+        max_retries = 2 
+        attempt = 0
+        while attempt < max_retries:
+            try:
+                response = chat_session.send_message(contents_to_send)
+                final_response_text = response.text 
+                break 
+            except Exception as e:
+                print(f"⚠️ Gemini Error: {e}")
+                attempt += 1
+                time.sleep(1)
+                if attempt == max_retries:
+                    final_response_text = "抱歉，JYM助教大腦運轉過熱，請稍後再試一次。"
         
-        # 儲存歷史
+        # 傳送回應給 LINE
+        line_bot_api.reply_message(
+            event.reply_token, 
+            TextSendMessage(text=final_response_text.replace('\x00', ''))
+        )
+        
         save_chat_history(user_id, chat_session)
 
     except Exception as e:
         print(f"❌ 處理訊息錯誤: {e}")
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="發生未知錯誤，請稍後再試。"))
+        try:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="發生未知錯誤，請稍後再試。"))
+        except:
+            pass
 
     # 寫入 Log
     save_to_research_log(
