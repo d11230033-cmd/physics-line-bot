@@ -492,7 +492,7 @@ def handle_message(event):
         contents_to_send = [rag_prompt]
 
         # 5. 傳送給 Gemini 主模型 (含自動重試機制)
-        max_retries = 2 
+        max_retries = 3 
         attempt = 0
         while attempt < max_retries:
             try:
