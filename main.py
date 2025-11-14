@@ -10,14 +10,10 @@ from datetime import datetime
 from flask import Flask, request, abort
 from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
-
-# [修正重點] 發送訊息用的模組 (ReplyMessageRequest, TextMessage)
 from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, ReplyMessageRequest,
     TextMessage
 )
-
-# [修正重點] 接收訊息用的模組 (Event, Content) 必須從 webhooks 引入
 from linebot.v3.webhooks import (
     MessageEvent,
     TextMessageContent,
@@ -25,8 +21,9 @@ from linebot.v3.webhooks import (
     AudioMessageContent
 )
 
-# --- 2. AI 大腦 (Google Gemini) ---
-import google.generativeai as genai
+# --- 2. AI 大腦 (使用最新的 google-genai SDK) ---
+from google import genai
+from google.genai import types
 
 # --- 3. 原始功能回歸 (Google Sheets) ---
 import gspread
@@ -54,36 +51,30 @@ DATABASE_URL = os.environ.get('DATABASE_URL')
 # 初始化設定
 configuration = Configuration(access_token=CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(CHANNEL_SECRET)
-genai.configure(api_key=GOOGLE_API_KEY)
+
+# [更新] 初始化 Google GenAI Client
+gemini_client = genai.Client(api_key=GOOGLE_API_KEY)
 
 # ==========================================
 # [安全性升級] Google Sheets 連線
-# 支援從 Render Secret Files 讀取 service_account.json
 # ==========================================
 def init_google_sheet():
     """連線 Google Sheet (優先尋找 Secret Files)"""
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        # 1. 優先尋找 Render Secret Files 路徑
         key_path = "/etc/secrets/service_account.json"
-        
-        # 2. 如果找不到 (例如在本地測試)，試試看根目錄
         if not os.path.exists(key_path):
             key_path = "service_account.json"
-            
-        # 3. 最後嘗試舊檔名
         if not os.path.exists(key_path):
             key_path = "credentials.json"
 
         if not os.path.exists(key_path):
-            print("⚠️ 找不到任何金鑰檔案 (service_account.json)，Google Sheet 功能將暫停。")
+            print("⚠️ 找不到金鑰檔案，Google Sheet 功能暫停。")
             return None
 
         creds = ServiceAccountCredentials.from_json_keyfile_name(key_path, scope)
         client = gspread.authorize(creds)
-        
-        # 請確認您的 Google Sheet 名稱
         sheet = client.open("Research_Log").sheet1 
         print(f"✅ Google Sheet 連線成功 (使用金鑰: {key_path})")
         return sheet
@@ -91,7 +82,6 @@ def init_google_sheet():
         print(f"⚠️ Google Sheet 連線錯誤: {e}")
         return None
 
-# 初始化 Sheet
 google_sheet = init_google_sheet()
 
 # ==========================================
@@ -105,10 +95,7 @@ def initialize_database():
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # 1. 啟用向量擴充 (RAG 核心)
         cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-        
-        # 2. 教材知識庫
         cur.execute("""
             CREATE TABLE IF NOT EXISTS teaching_materials (
                 id SERIAL PRIMARY KEY,
@@ -118,8 +105,6 @@ def initialize_database():
                 created_at TIMESTAMPTZ DEFAULT NOW()
             );
         """)
-        
-        # 3. 已讀檔案紀錄
         cur.execute("""
             CREATE TABLE IF NOT EXISTS imported_files (
                 id SERIAL PRIMARY KEY,
@@ -127,8 +112,6 @@ def initialize_database():
                 imported_at TIMESTAMPTZ DEFAULT NOW()
             );
         """)
-        
-        # 4. 系統日誌 (DB 版備份)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS system_logs (
                 id SERIAL PRIMARY KEY,
@@ -150,7 +133,7 @@ def initialize_database():
         conn.close()
 
 # ==========================================
-# [自動學習] 背景讀書系統 (RAG)
+# [自動學習] 背景讀書系統 (RAG) - SDK 更新版
 # ==========================================
 def extract_text_from_pdf(pdf_stream):
     try:
@@ -159,18 +142,24 @@ def extract_text_from_pdf(pdf_stream):
         for page in reader.pages:
             p_text = page.extract_text()
             if p_text: text += p_text
-        return text.replace('\x00', '') # 清洗 NUL
+        return text.replace('\x00', '')
     except Exception as e:
         print(f"❌ PDF 解析失敗: {e}")
         return ""
 
 def get_embedding(text):
-    """取得向量 (含重試)"""
+    """取得向量 (使用新版 SDK)"""
     for _ in range(3):
         try:
-            res = genai.embed_content(model="models/text-embedding-004", content=text)
-            return res['embedding']
-        except:
+            # [更新] 新版 Embedding 語法
+            response = gemini_client.models.embed_content(
+                model="text-embedding-004",
+                contents=text
+            )
+            # 新版回傳的是物件，需取出 values
+            return response.embeddings[0].values
+        except Exception as e:
+            print(f"Embedding 錯誤: {e}")
             time.sleep(1)
     return None
 
@@ -185,12 +174,10 @@ def background_learning_task():
             try:
                 conn = get_db_connection()
                 cur = conn.cursor()
-                # 檢查資料庫是否存在 (防止啟動初期連線失敗)
                 try:
                     cur.execute("SELECT filename FROM imported_files")
                     imported = {row[0] for row in cur.fetchall()}
                 except:
-                    # 如果資料表還沒建好，先跳過這次循環
                     conn.rollback()
                     time.sleep(10)
                     continue
@@ -205,7 +192,6 @@ def background_learning_task():
                         
                         if not text.strip(): continue
                         
-                        # 切片並存入向量庫
                         chunks = [text[i:i+1000] for i in range(0, len(text), 1000)]
                         for chunk in chunks:
                             vec = get_embedding(chunk)
@@ -235,14 +221,12 @@ threading.Thread(target=background_learning_task, daemon=True).start()
 def log_interaction(user_id, user_name, m_type, input_text, output_text):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # 1. Google Sheets (給人看)
     if google_sheet:
         try:
             google_sheet.append_row([timestamp, user_id, user_name, m_type, input_text, output_text])
         except Exception as e:
             print(f"❌ Sheet 寫入失敗: {e}")
 
-    # 2. Database (給程式分析)
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -257,10 +241,9 @@ def log_interaction(user_id, user_name, m_type, input_text, output_text):
         print(f"❌ DB Log 寫入失敗: {e}")
 
 # ==========================================
-# [邏輯核心] 對話處理
+# [邏輯核心] 對話處理 (SDK 更新版)
 # ==========================================
 def search_knowledge_base(query, top_k=3):
-    """從資料庫檢索相關教材"""
     vec = get_embedding(query)
     if not vec: return ""
     
@@ -291,7 +274,6 @@ def callback():
 def handle_message(event):
     user_id = event.source.user_id
     
-    # 取得暱稱
     user_name = "Unknown"
     try:
         with ApiClient(configuration) as api_client:
@@ -305,18 +287,16 @@ def handle_message(event):
     user_log_content = ""
 
     try:
-        # A. 文字處理 (含 RAG)
+        # A. 文字處理 (使用新版 generate_content)
         if m_type == 'text':
             text = event.message.text
             user_log_content = text
             
             if text == "!status":
-                # 系統健檢
                 sheet_status = "✅ 連線中" if google_sheet else "❌ 未連線"
-                final_response = f"📊 系統狀態報告\nGoogle Sheet: {sheet_status}\n資料庫功能: 正常運作\n\n我是你的全能物理助教！"
+                final_response = f"📊 系統狀態報告 (v2.0 GenAI)\nGoogle Sheet: {sheet_status}\n資料庫: 正常\nSDK: google-genai\n\n我是你的全能物理助教！"
             else:
                 knowledge_context = search_knowledge_base(text)
-                model = genai.GenerativeModel('gemini-2.5-pro')
                 prompt = f"""
                 你是一位專業物理助教。
                 請參考以下資料庫中的教材回答問題 (若有相關內容)：
@@ -324,10 +304,15 @@ def handle_message(event):
                 
                 學生問題：{text}
                 """
-                res = model.generate_content(prompt)
-                final_response = res.text
+                
+                # [更新] 新版生成語法
+                response = gemini_client.models.generate_content(
+                    model='gemini-2.5-pro',
+                    contents=prompt
+                )
+                final_response = response.text
 
-        # B. 圖片處理 (Vision)
+        # B. 圖片處理 (使用新版 Bytes 處理)
         elif m_type == 'image':
             user_log_content = "(傳送圖片)"
             with ApiClient(configuration) as api_client:
@@ -335,36 +320,41 @@ def handle_message(event):
                 msg_content = line_bot_api.get_message_content(event.message.id)
                 img_data = msg_content.read()
                 
-                model = genai.GenerativeModel('gemini-2.5-flash-image')
-                res = model.generate_content([
-                    "這是一題物理題目，請幫我詳細解題：",
-                    {'mime_type': 'image/jpeg', 'data': img_data}
-                ])
-                final_response = res.text
+                # [更新] 直接將 bytes 封裝成 Part 物件
+                image_part = types.Part.from_bytes(data=img_data, mime_type="image/jpeg")
+                
+                response = gemini_client.models.generate_content(
+                    model='gemini-2.5-flash-image',
+                    contents=["這是一題物理題目，請幫我詳細解題：", image_part]
+                )
+                final_response = response.text
 
-        # C. 語音處理 (Audio)
+        # C. 語音處理 (使用新版 File Upload)
         elif m_type == 'audio':
             user_log_content = "(傳送語音)"
             with ApiClient(configuration) as api_client:
                 line_bot_api = MessagingApi(api_client)
                 msg_content = line_bot_api.get_message_content(event.message.id)
                 
-                # 使用暫存檔處理音訊
                 with tempfile.NamedTemporaryFile(suffix='.m4a', delete=False) as temp_file:
                     for chunk in msg_content.iter_content():
                         temp_file.write(chunk)
                     temp_path = temp_file.name
 
                 try:
-                    # 上傳 Gemini 聽力分析
-                    audio_file = genai.upload_file(temp_path, mime_type="audio/mp4")
-                    while audio_file.state.name == "PROCESSING":
-                        time.sleep(1)
-                        audio_file = genai.get_file(audio_file.name)
+                    # [更新] 新版檔案上傳與生成
+                    uploaded_file = gemini_client.files.upload(path=temp_path)
                     
-                    model = genai.GenerativeModel('gemini-2.5-flash')
-                    res = model.generate_content(["請回答這段語音的問題：", audio_file])
-                    final_response = res.text
+                    # 等待處理完成 (新版狀態檢查)
+                    while uploaded_file.state.name == "PROCESSING":
+                        time.sleep(1)
+                        uploaded_file = gemini_client.files.get(name=uploaded_file.name)
+
+                    response = gemini_client.models.generate_content(
+                        model='gemini-2.5-flash',
+                        contents=["請回答這段語音的問題：", uploaded_file]
+                    )
+                    final_response = response.text
                 finally:
                     if os.path.exists(temp_path):
                         os.remove(temp_path)
@@ -393,10 +383,8 @@ def handle_message(event):
                 )
         except: pass
 
-    # 雙重 Log
     log_interaction(user_id, user_name, m_type, user_log_content, final_response)
 
-# 確保資料庫在 app 啟動時初始化
 initialize_database()
 
 if __name__ == "__main__":
